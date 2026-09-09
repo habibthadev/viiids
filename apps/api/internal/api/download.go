@@ -163,20 +163,80 @@ func sniffHeaders(target, referer string) (contentType string, contentLen string
 	return resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"), resp.Header.Get("Accept-Ranges"), nil
 }
 
-func safeFilename(target, override string) string {
+var mediaExtByType = map[string]string{
+	"video/mp4":        ".mp4",
+	"video/x-matroska": ".mkv",
+	"video/webm":       ".webm",
+	"video/x-msvideo":  ".avi",
+	"video/quicktime":  ".mov",
+	"video/x-flv":      ".flv",
+	"audio/mpeg":       ".mp3",
+}
+
+// safeFilename builds a download filename that always carries a media
+// extension. Titles arrive without one, so the extension is taken from the
+// file URL first and the sniffed content type second.
+func safeFilename(target, override, contentType string) string {
+	name := ""
 	if override != "" {
-		override = path.Base(strings.TrimSpace(override))
-		if override != "" && override != "." && override != "/" {
-			return override
+		clean := strings.TrimSpace(override)
+		clean = strings.ReplaceAll(clean, "\"", "")
+		clean = strings.ReplaceAll(clean, "\\", "-")
+		clean = strings.ReplaceAll(clean, "/", "-")
+		clean = strings.Map(func(r rune) rune {
+			if r < 32 || r == 127 {
+				return -1
+			}
+			return r
+		}, clean)
+		clean = strings.TrimSpace(clean)
+		if clean != "" && clean != "." {
+			name = clean
 		}
 	}
-	u, err := url.Parse(target)
-	if err == nil {
-		if base := path.Base(u.Path); base != "" && base != "." && base != "/" && strings.Contains(base, ".") {
-			return base
+	if name == "" {
+		if u, err := url.Parse(target); err == nil {
+			if base := path.Base(u.Path); base != "" && base != "." && base != "/" && strings.Contains(base, ".") {
+				name = base
+			}
 		}
 	}
-	return "viiids-download.mp4"
+	if name == "" {
+		name = "viiids-download"
+	}
+	if len(name) > 100 {
+		name = strings.TrimSpace(name[:100])
+	}
+	if !hasMediaExt(name) {
+		name += extForFile(target, contentType)
+	}
+	return name
+}
+
+func hasMediaExt(name string) bool {
+	lower := strings.ToLower(name)
+	for ext := range mediaExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func extForFile(target, contentType string) string {
+	if u, err := url.Parse(target); err == nil {
+		if ext := strings.ToLower(path.Ext(u.Path)); ext != "" {
+			if _, ok := mediaExts[ext]; ok {
+				return ext
+			}
+		}
+	}
+	if ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])); ct != "" {
+		if ext, ok := mediaExtByType[ct]; ok {
+			return ext
+		}
+	}
+	return ".mp4"
 }
 
 type resolveResult struct {
@@ -391,7 +451,7 @@ func HandleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	h := w.Header()
 	h.Set("Content-Type", ct)
-	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", safeFilename(raw, r.URL.Query().Get("filename"))))
+	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", safeFilename(raw, r.URL.Query().Get("filename"), ct)))
 	h.Set("Accept-Ranges", "bytes")
 	if upResp.Header.Get("Content-Type") != "" && isMediaContentType(upResp.Header.Get("Content-Type")) {
 		h.Set("Content-Type", strings.Split(upResp.Header.Get("Content-Type"), ";")[0])
