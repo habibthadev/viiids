@@ -1,6 +1,3 @@
-import satori from 'satori'
-import { Resvg } from '@resvg/resvg-js'
-
 export interface OgInput {
   title: string
   eyebrow: string
@@ -10,7 +7,10 @@ export interface OgInput {
 
 const fontCache = new Map<string, ArrayBuffer>()
 
-async function getFont(family: 'Poppins' | 'Plus Jakarta Sans', weight: 500 | 700): Promise<ArrayBuffer> {
+export async function getOgFont(
+  family: 'Poppins' | 'Plus Jakarta Sans',
+  weight: 500 | 700,
+): Promise<ArrayBuffer> {
   const key = `${family}:${weight}`
   const hit = fontCache.get(key)
   if (hit) return hit
@@ -35,14 +35,9 @@ async function getFont(family: 'Poppins' | 'Plus Jakarta Sans', weight: 500 | 70
   return buf
 }
 
-export async function renderOg({ title, eyebrow, index, kind }: OgInput): Promise<Uint8Array> {
-  const [poppins700, poppins500, jakarta700] = await Promise.all([
-    getFont('Poppins', 700),
-    getFont('Poppins', 500),
-    getFont('Plus Jakarta Sans', 700),
-  ])
+export function OgCard({ title, eyebrow, index, kind }: OgInput) {
   const size = title.length > 52 ? 54 : title.length > 30 ? 66 : 80
-  const svg = await satori(
+  return (
     <div
       style={{
         width: 1200,
@@ -135,16 +130,6 @@ export async function renderOg({ title, eyebrow, index, kind }: OgInput): Promis
           {kind.toUpperCase()}
         </div>
       </div>
-    </div>,
-    {
-      width: 1200,
-      height: 630,
-      fonts: [
-        { name: 'Poppins', data: poppins700, weight: 700 },
-        { name: 'Poppins', data: poppins500, weight: 500 },
-        { name: 'Plus Jakarta Sans', data: jakarta700, weight: 700 },
-      ],
-    },
+    </div>
   )
-  return new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } }).render().asPng()
 }

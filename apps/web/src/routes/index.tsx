@@ -31,10 +31,18 @@ function LandingPage() {
             <h1 className="headline display">
               Every shelf. <span className="tone">One search.</span>
             </h1>
+            <div className="accent-bar" aria-hidden="true" />
           </div>
           <p className="sub" data-hero style={{ marginBottom: 0 }}>
             One shelf, fully stocked. Choose it to start.
           </p>
+          <div className="meta-strip" data-hero>
+            <span>05 Shelves</span>
+            <span className="sep" aria-hidden="true">·</span>
+            <span>Live search</span>
+            <span className="sep" aria-hidden="true">·</span>
+            <span>Direct files</span>
+          </div>
 
           <div className="plat-grid mt-32">
             {VISIBLE_PLATFORMS.map((p: PlatformId, n) => (
