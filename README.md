@@ -5,7 +5,7 @@ platforms (NetNaija, Nkiri, Waploaded, FzMovies, O2TVSeries) from one fast,
 accessible shelf. In-site downloads stream through the API, no new tabs.
 
 Monorepo: TanStack Start web app (`apps/web`, Vercel) + Go JSON API
-(`apps/api`, Vercel serverless Go functions), managed with pnpm workspaces.
+(`apps/api`, Vercel Go server), managed with pnpm workspaces.
 
 ## Quickstart
 
@@ -82,12 +82,11 @@ only in the Vercel dashboard, never in the repo.
 ```text
 viiids/
   apps/
-    api/                  Go JSON API (module viiids-api, Vercel serverless)
+    api/                  Go JSON API (module viiids-api, Vercel Go server)
       engine/             5 scrapers: netnaija, nkiri, waploaded, fzmovies, o2tvseries
       internal/api/       shared handlers: cache, singleflight, resolve, download
-      api/                Vercel Go functions (one file per endpoint)
-      main.go             local dev server (same handlers, with CORS)
-      vercel.json         function timeouts for slow scrapes
+      main.go             net/http server on PORT (local dev and Vercel alike)
+      vercel.json         Go framework preset
     web/                  TanStack Start + React 19 + TypeScript
       src/routes/         / landing, /$platformId (browse, movies, series, title), /api/og
       src/components/     custom kit: search, segmented, chips, rows, modal, drawer
@@ -118,15 +117,15 @@ from the same repo.
 ### API → Vercel (`viiids-api`)
 
 1. Import the same repo as a second project, set Root Directory to `apps/api`.
-   The Go runtime picks up `api/*.go` as serverless functions automatically;
-   `apps/api/vercel.json` raises their timeout to 60s for slow scrapes.
+   The Go framework preset detects `go.mod` + `main.go` and runs it as a
+   server on `PORT` (`apps/api/vercel.json` sets the preset, nothing else).
 2. No environment variables needed. Deploy.
 3. The API answers at `https://viiids-api.vercel.app`, health check included:
    `GET /api/health`.
 
-Notes: serverless instances cache in memory only, so the first scrape after
-idle pays a cold start. Long downloads stream without buffering. If a
-function ever needs more than 60s, that limit rises with a Pro plan.
+Notes: instances cache in memory only, so the first scrape after idle pays a
+cold start. Long downloads stream without buffering, and no function timeout
+cuts them off mid-file the way serverless caps would.
 
 ## How downloads work
 
