@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.output/
+bin/
+*.local
+.DS_Store
+apps/web/src/routeTree.gen.ts

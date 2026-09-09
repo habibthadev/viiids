@@ -1,0 +1,18 @@
+{
+  "name": "viiids",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "concurrently -n api,web -c green,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build",
+    "dev:api": "sh -c \"cd apps/api && PORT=8080 go run .\"",
+    "build:api": "sh -c \"cd apps/api && go build -o ../../bin/api .\"",
+    "typecheck": "pnpm --filter web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.3.3"
+  }
+}
