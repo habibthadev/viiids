@@ -93,9 +93,8 @@ viiids/
       src/lib/            zod API client, OG renderer (satori + resvg)
       src/store/          zustand UI prefs
       public/             favicon set, manifest, robots, sitemap
+      vercel.json         web build wiring (install, build, output)
   reference-code/         untouched legacy Gophie source (not built)
-  vercel.json             intentionally empty: file config beats dashboard
-                        config, so per-project settings live in dashboards
 ```
 
 `apps/web/src/routeTree.gen.ts` is generated on dev/build; never edit it.
@@ -103,10 +102,10 @@ viiids/
 ## Deploy
 
 Everything deploys from the Vercel dashboard, no CLI. Create two projects
-from the same repo. One rule runs the whole setup: the repo-root `vercel.json`
-is intentionally empty, because file config beats dashboard config every time
-and a shared file cannot serve two different apps. So each project is
-configured 100% in its own dashboard rows:
+from the same repo. Each app carries its own `vercel.json` beside its code
+(`apps/web`, `apps/api`); there is deliberately no root one, since a shared
+file cannot serve two different apps and file config beats dashboard config
+every time. Dashboards only set Root Directory, env vars, and Node version:
 
 ### Web → Vercel (`viiids`)
 
