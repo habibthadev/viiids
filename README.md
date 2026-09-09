@@ -94,7 +94,8 @@ viiids/
       src/store/          zustand UI prefs
       public/             favicon set, manifest, robots, sitemap
   reference-code/         untouched legacy Gophie source (not built)
-  vercel.json             Vercel build wiring (Nitro vercel preset output)
+  vercel.json             intentionally empty: file config beats dashboard
+                        config, so per-project settings live in dashboards
 ```
 
 `apps/web/src/routeTree.gen.ts` is generated on dev/build; never edit it.
@@ -102,26 +103,36 @@ viiids/
 ## Deploy
 
 Everything deploys from the Vercel dashboard, no CLI. Create two projects
-from the same repo.
+from the same repo. One rule runs the whole setup: the repo-root `vercel.json`
+is intentionally empty, because file config beats dashboard config every time
+and a shared file cannot serve two different apps. So each project is
+configured 100% in its own dashboard rows:
 
 ### Web → Vercel (`viiids`)
 
-1. Import the repo, keep Root Directory at the repo root (`vercel.json`
-   already points the build at `apps/web` via the Nitro preset).
-2. Environment → add before the first build:
-   - `VITE_API_BASE=https://viiids-api.vercel.app`
-   - `VITE_SITE_URL=https://viiids.vercel.app`
-3. Deploy. Dynamic OG images render at `/api/og` (satori + resvg run in the
-   serverless function; fonts load from Google at runtime and cache in memory).
+Root Directory `./`, plus:
+
+| Setting          | Value                        |
+| ---------------- | ---------------------------- |
+| Install Command  | `pnpm install`               |
+| Build Command    | `pnpm --filter web build`    |
+| Output Directory | `apps/web/.vercel/output`    |
+| Framework        | Other (Nitro preset handles it) |
+| Node.js Version  | 22.x                         |
+
+Environment → add before the first build:
+- `VITE_API_BASE=https://viiids-api.vercel.app`
+- `VITE_SITE_URL=https://viiids.vercel.app`
+
+Deploy. Dynamic OG images render at `/api/og` (satori + resvg run in the
+serverless function; fonts load from Google at runtime and cache in memory).
 
 ### API → Vercel (`viiids-api`)
 
-1. Import the same repo as a second project, set Root Directory to `apps/api`.
-   The Go framework preset detects `go.mod` + `main.go` and runs it as a
-   server on `PORT` (`apps/api/vercel.json` sets the preset, nothing else).
-2. No environment variables needed. Deploy.
-3. The API answers at `https://viiids-api.vercel.app`, health check included:
-   `GET /api/health`.
+Root Directory `apps/api`, every other build row left empty. The Go runtime
+auto-detects `go.mod` + `main.go` and runs the server on `PORT`. No
+environment variables needed. Deploy. The API answers at
+`https://viiids-api.vercel.app`, health check included: `GET /api/health`.
 
 Notes: instances cache in memory only, so the first scrape after idle pays a
 cold start. Long downloads stream without buffering, and no function timeout
