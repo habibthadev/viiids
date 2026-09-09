@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently -n api,web -c green,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:web": "pnpm --filter web dev",
