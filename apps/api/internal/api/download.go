@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"context"
@@ -186,7 +186,7 @@ type resolveResult struct {
 	Note   string   `json:"note,omitempty"`
 }
 
-func handleResolve(w http.ResponseWriter, r *http.Request) {
+func HandleResolve(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.URL.Query().Get("url"))
 	if err := guardURL(raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "url not allowed"})
@@ -318,7 +318,7 @@ func handleResolve(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
-func handleDownload(w http.ResponseWriter, r *http.Request) {
+func HandleDownload(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.URL.Query().Get("url"))
 	if err := guardURL(raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "url not allowed"})

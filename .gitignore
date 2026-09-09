@@ -4,4 +4,6 @@ dist/
 bin/
 *.local
 .DS_Store
+.env
+.env.production
 apps/web/src/routeTree.gen.ts

@@ -9,6 +9,7 @@
     "build:web": "pnpm --filter web build",
     "dev:api": "sh -c \"cd apps/api && PORT=8080 go run .\"",
     "build:api": "sh -c \"cd apps/api && go build -o ../../bin/api .\"",
+    "check:api": "sh -c \"cd apps/api && go build . ./engine/... ./internal/... && for f in api/*.go; do go build -o /dev/null \\\"$f\\\" || exit 1; done\"",
     "typecheck": "pnpm --filter web typecheck"
   },
   "devDependencies": {

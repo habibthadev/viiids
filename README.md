@@ -5,7 +5,7 @@ platforms (NetNaija, Nkiri, Waploaded, FzMovies, O2TVSeries) from one fast,
 accessible shelf. In-site downloads stream through the API, no new tabs.
 
 Monorepo: TanStack Start web app (`apps/web`, Vercel) + Go JSON API
-(`apps/api`, Fly.io), managed with pnpm workspaces.
+(`apps/api`, Vercel serverless Go functions), managed with pnpm workspaces.
 
 ## Quickstart
 
@@ -33,7 +33,6 @@ That starts both servers with one command:
 | `pnpm build:web`   | Production build (Nitro output)           |
 | `pnpm build:api`   | API binary to `bin/api`                   |
 | `pnpm typecheck`   | `tsc --noEmit` for the web app            |
-| `pnpm deploy:api`  | `fly deploy` from `apps/api`              |
 
 ## API reference
 
@@ -71,25 +70,24 @@ curl -O -J "http://localhost:8080/api/download?url=<file-url>&page=<source-page-
 | Variable            | Where          | Default                 | Purpose                              |
 | ------------------- | -------------- | ----------------------- | ------------------------------------ |
 | `PORT`              | API            | `8080`                  | Listen port                          |
-| `VITE_API_BASE`     | Web build time | `http://localhost:8080` | API origin (prod: Fly URL)           |
+| `VITE_API_BASE`     | Web build time | `http://localhost:8080` | API origin (prod: Vercel API URL)    |
 | `VITE_SITE_URL`     | Web build time | `http://localhost:3000` | Canonical origin for OG/meta         |
 | `DL_ALLOW_PRIVATE`  | API (`=1`)     | unset (blocked)         | Allow private IPs in resolve/download (local tests only) |
 
-Local files: `apps/web/.env` (dev), `apps/web/.env.production`
-(committed Fly placeholder, dashboard values win).
+Local files: `apps/web/.env` (dev, never committed). Production values live
+only in the Vercel dashboard, never in the repo.
 
 ## Project structure
 
 ```text
 viiids/
   apps/
-    api/                  Go JSON API (module viiids-api)
+    api/                  Go JSON API (module viiids-api, Vercel serverless)
       engine/             5 scrapers: netnaija, nkiri, waploaded, fzmovies, o2tvseries
-      main.go             routes, cache, singleflight, CORS
-      download.go         /api/resolve + /api/download (streaming proxy, SSRF guard)
-      unlock.go           file-host unlocks (XFS form, JS tokens), link verify
-      Dockerfile          Fly.io image (multi-stage, ca-certificates)
-      fly.toml            Fly.io service config + /api/health checks
+      internal/api/       shared handlers: cache, singleflight, resolve, download
+      api/                Vercel Go functions (one file per endpoint)
+      main.go             local dev server (same handlers, with CORS)
+      vercel.json         function timeouts for slow scrapes
     web/                  TanStack Start + React 19 + TypeScript
       src/routes/         / landing, /$platformId (browse, movies, series, title), /api/og
       src/components/     custom kit: search, segmented, chips, rows, modal, drawer
@@ -104,30 +102,31 @@ viiids/
 
 ## Deploy
 
-### Web → Vercel
+Everything deploys from the Vercel dashboard, no CLI. Create two projects
+from the same repo.
+
+### Web → Vercel (`viiids`)
 
 1. Import the repo, keep Root Directory at the repo root (`vercel.json`
    already points the build at `apps/web` via the Nitro preset).
 2. Environment → add before the first build:
-   - `VITE_API_BASE=https://viiids-api.fly.dev`
+   - `VITE_API_BASE=https://viiids-api.vercel.app`
    - `VITE_SITE_URL=https://viiids.vercel.app`
 3. Deploy. Dynamic OG images render at `/api/og` (satori + resvg run in the
    serverless function; fonts load from Google at runtime and cache in memory).
 
-### API → Fly.io
+### API → Vercel (`viiids-api`)
 
-```bash
-cd apps/api
-fly auth login
-fly launch --no-deploy   # accept viiids-api (rename in fly.toml if taken)
-fly deploy
-fly open                 # health check lives at /api/health
-```
+1. Import the same repo as a second project, set Root Directory to `apps/api`.
+   The Go runtime picks up `api/*.go` as serverless functions automatically;
+   `apps/api/vercel.json` raises their timeout to 60s for slow scrapes.
+2. No environment variables needed. Deploy.
+3. The API answers at `https://viiids-api.vercel.app`, health check included:
+   `GET /api/health`.
 
-Fly notes: `auto_stop_machines = 'suspend'` with `min_machines_running = 0`
-keeps idle cost at zero; first scrape after idle pays a cold start. Raise the
-minimum if shelves must stay warm. Long downloads stream without buffering,
-so instance memory stays flat.
+Notes: serverless instances cache in memory only, so the first scrape after
+idle pays a cold start. Long downloads stream without buffering. If a
+function ever needs more than 60s, that limit rises with a Pro plan.
 
 ## How downloads work
 
