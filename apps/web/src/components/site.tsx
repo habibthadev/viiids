@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
+  ArrowRight,
   ArrowSquareOut,
   CheckCircle,
   DownloadSimple,
@@ -12,7 +13,7 @@ import {
 } from '@phosphor-icons/react'
 import { useQuery } from '@tanstack/react-query'
 import { VISIBLE_PLATFORMS, downloadHref, fetchPlatforms, fetchResolve, fileLabel, type Movie, type PlatformId } from '~/lib/api'
-import { PLATFORM_LABELS } from '~/store/useAppStore'
+import { PLATFORM_BLURBS, PLATFORM_LABELS } from '~/store/useAppStore'
 import { AlertDialog } from '~/components/Modal'
 import { Badge } from '~/components/chrome'
 
@@ -29,7 +30,7 @@ export function TopBar() {
         </button>
         <Link to="/" className="brand">
           <span className="brand-mark">V</span>
-          <span className="brand-word">viiids</span>
+          <span className="brand-word">viiids<span className="brand-dot" aria-hidden="true">.</span></span>
         </Link>
         <nav className="nav-links" aria-label="Primary">
           <Link to="/" className="nav-link" activeProps={{ className: 'nav-link active' }} activeOptions={{ exact: true }}>
@@ -48,16 +49,18 @@ export function TopBar() {
         <>
           <div className="overlay" style={{ background: 'rgba(15,15,15,0.25)' }} onClick={() => setMenuOpen(false)} />
           <aside className="drawer" role="navigation" aria-label="Mobile">
-            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
               <span className="eyebrow"><span className="eyebrow-dot" /> Menu</span>
               <button type="button" className="icon-btn" style={{ display: 'inline-flex' }} aria-label="Close menu" onClick={() => setMenuOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <Link to="/" className="side-item" activeProps={{ className: 'side-item active' }} activeOptions={{ exact: true }} onClick={() => setMenuOpen(false)}>
-              All platforms
+              <span className="plat-index" aria-hidden="true">00</span>
+              <span style={{ flex: 1 }}>All platforms</span>
+              <ArrowRight size={16} className="arrow" aria-hidden="true" />
             </Link>
-            {VISIBLE_PLATFORMS.map((p: PlatformId) => (
+            {VISIBLE_PLATFORMS.map((p: PlatformId, n: number) => (
               <Link
                 key={p}
                 to="/$platformId"
@@ -66,7 +69,14 @@ export function TopBar() {
                 activeProps={{ className: 'side-item active' }}
                 onClick={() => setMenuOpen(false)}
               >
-                {PLATFORM_LABELS[p]}
+                <span className="plat-index" aria-hidden="true">{String(n + 1).padStart(2, '0')}</span>
+                <span style={{ flex: 1 }}>
+                  {PLATFORM_LABELS[p]}
+                  <span className="small muted" style={{ display: 'block', letterSpacing: 'normal', textTransform: 'none' }}>
+                    {PLATFORM_BLURBS[p]}
+                  </span>
+                </span>
+                <ArrowRight size={16} className="arrow" aria-hidden="true" />
               </Link>
             ))}
           </aside>

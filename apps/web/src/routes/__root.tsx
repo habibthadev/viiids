@@ -21,7 +21,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: 'og:type', content: 'website' },
       { property: 'og:site_name', content: 'viiids' },
       { property: 'og:url', content: `${SITE_URL}/` },
-      { property: 'og:image', content: ogImage({ title: 'Every shelf. One search.', eyebrow: 'VIIIDS' }) },
+      { property: 'og:image', content: ogImage('brand') },
       { name: 'twitter:card', content: 'summary_large_image' },
       { name: 'twitter:title', content: 'viiids: every shelf, one search' },
       { name: 'twitter:description', content: 'Search and browse movies and series across five platforms.' },

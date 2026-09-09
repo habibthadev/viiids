@@ -1,3 +1,23 @@
+import satoriImport from 'satori'
+import { Resvg } from '@resvg/resvg-js'
+
+type SatoriFn = (element: unknown, options: Record<string, unknown>) => Promise<string>
+
+// Bundlers wrap the export zero, one, or two levels deep depending on
+// CJS/ESM interop. Unwrap until a function appears.
+function loadSatori(): SatoriFn {
+  let cur: unknown = satoriImport as unknown
+  for (let i = 0; i < 3; i++) {
+    if (typeof cur === 'function') return cur as SatoriFn
+    if (cur && typeof cur === 'object' && 'default' in cur) {
+      cur = (cur as { default: unknown }).default
+      continue
+    }
+    break
+  }
+  throw new Error('cannot load satori renderer')
+}
+
 export interface OgInput {
   title: string
   eyebrow: string
@@ -33,6 +53,29 @@ export async function getOgFont(
   const buf = await (await fetch(fontUrl)).arrayBuffer()
   fontCache.set(key, buf)
   return buf
+}
+
+export async function renderCard(input: OgInput): Promise<Uint8Array> {
+  const svg = await renderSvg(input)
+  return new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } }).render().asPng()
+}
+
+async function renderSvg(input: OgInput): Promise<string> {
+  const satori = loadSatori()
+  const [poppins700, poppins500, jakarta700] = await Promise.all([
+    getOgFont('Poppins', 700),
+    getOgFont('Poppins', 500),
+    getOgFont('Plus Jakarta Sans', 700),
+  ])
+  return satori(OgCard(input), {
+    width: 1200,
+    height: 630,
+    fonts: [
+      { name: 'Poppins', data: poppins700, weight: 700 },
+      { name: 'Poppins', data: poppins500, weight: 500 },
+      { name: 'Plus Jakarta Sans', data: jakarta700, weight: 700 },
+    ],
+  })
 }
 
 export function OgCard({ title, eyebrow, index, kind }: OgInput) {

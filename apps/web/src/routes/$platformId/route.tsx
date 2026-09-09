@@ -15,14 +15,13 @@ export const Route = createFileRoute('/$platformId')({
     const id = params.platformId
     const label = isPlatform(id) ? PLATFORM_LABELS[id] : 'Shelf'
     const tag = isPlatform(id) ? PLATFORM_TAGLINES[id] : (['Shelf', ''] as const)
-    const index = String(ALL_PLATFORMS.indexOf(id as (typeof ALL_PLATFORMS)[number]) + 1).padStart(2, '0')
     const title = `${label}: ${tag[0]}`
     return {
       meta: [
         { title },
         { property: 'og:title', content: title },
         { property: 'og:url', content: `${SITE_URL}/${id}` },
-        { property: 'og:image', content: ogImage({ title: `${tag[0]} ${tag[1]}`, eyebrow: label, index }) },
+        { property: 'og:image', content: ogImage(isPlatform(id) ? id : 'brand') },
         { name: 'twitter:card', content: 'summary_large_image' },
         { name: 'twitter:title', content: title },
       ],

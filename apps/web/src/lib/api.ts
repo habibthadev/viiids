@@ -4,13 +4,10 @@ export const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? 'http://local
 
 export const SITE_URL = (import.meta as any).env?.VITE_SITE_URL ?? 'http://localhost:3000'
 
-/** Absolute URL for a dynamic OG image. Crawlers need absolute URLs. */
-export function ogImage(params: { title: string; eyebrow?: string; index?: string; kind?: string }): string {
-  const q = new URLSearchParams({ title: params.title })
-  if (params.eyebrow) q.set('eyebrow', params.eyebrow)
-  if (params.index) q.set('index', params.index)
-  if (params.kind) q.set('kind', params.kind)
-  return `${SITE_URL}/api/og?${q.toString()}`
+/** Absolute URL for a pre-rendered OG image. Static files beat runtime
+rendering: they work on every host with zero native dependencies. */
+export function ogImage(name: 'brand' | PlatformId): string {
+  return `${SITE_URL}/og/${name}.png`
 }
 
 export const PlatformId = z.enum(['netnaija', 'nkiri', 'waploaded', 'fzmovies', 'o2tvseries'])
