@@ -46,10 +46,12 @@ func NewNkiriEngine() *NkiriEngine {
 	nkiriEngine.ListURL = listURL
 	nkiriEngine.ListCategories = []string{
 		"international",
-		"african",
+		"tv-series",
+		"download-k-drama",
 		"asian-movies/download-bollywood-movies",
 		"asian-movies/download-korean-movies",
 		"asian-movies/download-philippine-movies",
+		"asian-movies/chinese-dramas",
 	}
 	return &nkiriEngine
 }

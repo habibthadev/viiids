@@ -1,15 +1,30 @@
 import * as React from 'react'
-import { createFileRoute, getRouteApi, notFound } from '@tanstack/react-router'
+import { createFileRoute, getRouteApi, notFound, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import gsap from 'gsap'
-import { WarningCircle } from '@phosphor-icons/react'
-import { fetchList, fetchSearch, type Movie, isPlatform } from '~/lib/api'
-import { useAppStore, type SortMode } from '~/store/useAppStore'
-import { Chip, RowSkeleton, SearchBar, Segmented, TitleRow } from '~/components/controls'
-import { Badge, LoadError } from '~/components/chrome'
+import { fetchList, fetchSearch, type Movie, isPlatform, type PlatformId } from '~/lib/api'
+import { PLATFORM_BLURBS, PLATFORM_LABELS, useAppStore, type ViewMode } from '~/store/useAppStore'
+import { Menu, Pager, SearchField, TitleRow, TitleTile } from '~/components/controls'
+import { Empty, ErrorCard, Label, Section, SkeletonRows } from '~/components/primitives'
+import { Page } from '~/components/site'
+import { RowList } from '~/components/rows'
+import { captureFlip, playFlip, useIsoLayoutEffect, type FlipState } from '~/lib/motion'
 
-export const Route = createFileRoute('/$platformId/')({ component: BrowsePage })
+export const Route = createFileRoute('/$platformId/')({
+  validateSearch: (s: Record<string, unknown>): { kind?: 'movie' | 'series' } => ({
+    kind: s.kind === 'movie' || s.kind === 'series' ? s.kind : undefined,
+  }),
+  head: ({ params }) => {
+    const label = PLATFORM_LABELS[params.platformId as PlatformId] ?? 'Shelf'
+    return {
+      meta: [
+        { title: `${label} shelf — viiids` },
+        { name: 'description', content: `Browse ${label} like a reading list. Search, filter, and download in-site.` },
+      ],
+    }
+  },
+  component: BrowsePage,
+})
 
 const platformApi = getRouteApi('/$platformId')
 const QuerySchema = z.string().trim().max(120)
@@ -26,7 +41,9 @@ function useDebounced<T>(v: T, ms: number): T {
 function BrowsePage() {
   const { platformId: rawPlatform } = platformApi.useParams()
   if (!isPlatform(rawPlatform)) throw notFound()
-  const platform = rawPlatform
+  const platform: PlatformId = rawPlatform
+  const kind = Route.useSearch().kind ?? 'all'
+  const navigate = useNavigate({ from: '/$platformId/' })
   const s = useAppStore()
   const [draft, setDraft] = React.useState('')
   const [page, setPage] = React.useState(1)
@@ -41,14 +58,14 @@ function BrowsePage() {
   }, [platform])
 
   const listQ = useQuery({
-    queryKey: ['list', platform, page],
-    queryFn: () => fetchList({ platform, page }),
+    queryKey: ['list', platform, page, kind],
+    queryFn: () => fetchList({ platform, page, kind }),
     enabled: !searching,
     placeholderData: keepPreviousData,
   })
   const searchQ = useQuery({
-    queryKey: ['search', platform, debounced],
-    queryFn: () => fetchSearch({ platform, q: debounced }),
+    queryKey: ['search', platform, debounced, kind],
+    queryFn: () => fetchSearch({ platform, q: debounced, kind }),
     enabled: searching && QuerySchema.safeParse(debounced).success,
     placeholderData: keepPreviousData,
   })
@@ -57,108 +74,184 @@ function BrowsePage() {
 
   const movies = React.useMemo(() => {
     let out = [...raw]
-    if (s.onlySeries) out = out.filter((m) => m.IsSeries)
-    if (s.onlyMovies) out = out.filter((m) => !m.IsSeries)
-    if (s.withCover) out = out.filter((m) => !!m.CoverPhotoLink)
     if (s.sort === 'year-desc') out.sort((a, b) => (b.Year || 0) - (a.Year || 0))
     if (s.sort === 'title-az') out.sort((a, b) => a.Title.localeCompare(b.Title))
     return out
-  }, [raw, s.onlySeries, s.onlyMovies, s.withCover, s.sort])
+  }, [raw, s.sort])
 
-  // Title links need the API-order index, so details survive local sorting.
-  const linkKind = s.onlySeries ? 'series' : s.onlyMovies ? 'movie' : 'all'
-  const apiOrder = React.useMemo(() => {
-    if (linkKind === 'series') return raw.filter((m) => m.IsSeries)
-    if (linkKind === 'movie') return raw.filter((m) => !m.IsSeries)
-    return raw
-  }, [raw, linkKind])
-  const apiIndex = (dl: string) => Math.max(0, apiOrder.findIndex((m) => m.DownloadLink === dl))
+  // Title links carry the API-order index, so details survive local sorting.
+  const apiIndex = (dl: string) => Math.max(0, raw.findIndex((m) => m.DownloadLink === dl))
 
+  /* view flip: capture synchronously when the store flips, animate after paint */
+  const flipState = React.useRef<FlipState | null>(null)
   React.useEffect(() => {
-    const els = document.querySelectorAll('[data-reveal]')
-    if (els.length) gsap.fromTo(els, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, stagger: 0.03, ease: 'power2.out', overwrite: true })
-  }, [movies.length, page])
+    return useAppStore.subscribe((state, prev) => {
+      if (state.view !== prev.view) flipState.current = captureFlip('[data-flip-id]')
+    })
+  }, [])
+  useIsoLayoutEffect(() => {
+    playFlip(flipState.current, '[data-flip-id]')
+    flipState.current = null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.view])
 
-  const submit = () => {
-    if (draft.trim() && !QuerySchema.safeParse(draft.trim()).success) {
-      setQueryError('Keep queries under 120 characters.')
-      return
-    }
-    setQueryError(null)
-    setPage(1)
+  const switchView = (next: ViewMode) => {
+    if (next === s.view) return
+    flipState.current = captureFlip('[data-flip-id]')
+    s.set({ view: next })
   }
 
+  const submitKind = (k: 'all' | 'movie' | 'series') => {
+    setPage(1)
+    navigate({ search: k === 'all' ? {} : { kind: k }, replace: true })
+  }
+
+  const shown = movies.length
+  const statusText = searching
+    ? `${shown} match${shown === 1 ? '' : 'es'} for “${debounced}”`
+    : `page ${String(page).padStart(2, '0')} · ${shown} titles`
+
   return (
-    <div>
-      <SearchBar
-        value={draft}
-        onChange={(v) => {
-          setDraft(v)
-          if (queryError) setQueryError(null)
-        }}
-        onSubmit={submit}
-        placeholder={`Search ${platform} titles`}
-      />
-      {queryError && <p className="row small" style={{ color: '#b00020' }}><WarningCircle size={14} /> {queryError}</p>}
-
-      <div className="filter-bar mt-16">
-        <Segmented<SortMode>
-          label="Order"
-          value={s.sort}
-          onChange={(v) => s.set({ sort: v })}
-          options={[
-            { value: 'relevance', label: 'Top' },
-            { value: 'year-desc', label: 'Newest' },
-            { value: 'title-az', label: 'A to Z' },
-          ]}
+    <Page>
+      <Section
+        num="01"
+        big
+        as="h1"
+        title={PLATFORM_LABELS[platform]}
+        desc={PLATFORM_BLURBS[platform]}
+      >
+        <SearchField
+          id="shelf-search"
+          value={draft}
+          onChange={(v) => {
+            setDraft(v)
+            if (queryError) setQueryError(null)
+          }}
+          placeholder={`Filter ${PLATFORM_LABELS[platform]}…`}
         />
-        <div>
-          <span className="field-label">Show</span>
-          <div className="row" style={{ flexWrap: 'nowrap' }}>
-            <Chip on={s.onlyMovies} label="Movies" onToggle={() => s.set({ onlyMovies: !s.onlyMovies, onlySeries: false })} />
-            <Chip on={s.onlySeries} label="Series" onToggle={() => s.set({ onlySeries: !s.onlySeries, onlyMovies: false })} />
-            <Chip on={s.withCover} label="Covers" onToggle={() => s.set({ withCover: !s.withCover })} />
+        {queryError ? <p className="t-body c-bad mt-2">{queryError}</p> : null}
+
+        <div className="rowflex mt-3" style={{ gap: '0.4rem' }}>
+          <div className="seg" role="group" aria-label="Kind">
+            {(
+              [
+                ['all', 'Everything'],
+                ['movie', 'Movies'],
+                ['series', 'Series'],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                className="seg-opt tap"
+                aria-pressed={kind === v}
+                onClick={() => submitKind(v)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          <Menu
+            label="Order"
+            value={s.sort}
+            onChange={(v) => s.set({ sort: v as typeof s.sort })}
+            options={[
+              { value: 'relevance', label: 'Top results', hint: 'site order' },
+              { value: 'year-desc', label: 'Newest first', hint: 'by year' },
+              { value: 'title-az', label: 'Title A to Z', hint: 'alphabet' },
+            ]}
+          />
+          <div className="rowflex" style={{ gap: '0.15rem', marginLeft: 'auto' }} role="group" aria-label="View">
+            <button
+              type="button"
+              className={`iconbtn tap${s.view === 'list' ? ' active' : ''}`}
+              aria-label="List view"
+              aria-pressed={s.view === 'list'}
+              onClick={() => switchView('list')}
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                <path d="M1 3.5h13M1 7.5h13M1 11.5h13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`iconbtn tap${s.view === 'grid' ? ' active' : ''}`}
+              aria-label="Grid view"
+              aria-pressed={s.view === 'grid'}
+              onClick={() => switchView('grid')}
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                <rect x="1" y="1" width="5.5" height="5.5" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                <rect x="8.5" y="1" width="5.5" height="5.5" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                <rect x="1" y="8.5" width="5.5" height="5.5" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+            </button>
+          </div>
+          <Label className="tnum" role="status">
+            {statusText}
+          </Label>
         </div>
-      </div>
 
-      <p className="small muted" role="status">
-        {searching ? <>Matches for “{debounced}”</> : <>Page {page}</>} · {movies.length} shown
-      </p>
-
-      {activeQ.isPending && !activeQ.data && (
-        <div className="title-list">
-          {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
-        </div>
-      )}
-      {activeQ.isError && (
-        <LoadError message={activeQ.error instanceof Error ? activeQ.error.message : undefined} onRetry={() => activeQ.refetch()} />
-      )}
-      {!activeQ.isPending && !activeQ.isError && movies.length === 0 && (
-        <div className="card"><strong>Nothing here.</strong><p className="muted small" style={{ margin: '4px 0 0' }}>Try another word or shelf.</p></div>
-      )}
-      {movies.length > 0 && (
-        <div className="title-list">
-          {movies.map((m) => (
-            <TitleRow
-              key={`${m.DownloadLink}-${m.Title}`}
-              movie={m}
-              platform={platform}
-              context={searching
-                ? { mode: 'search', q: debounced, kind: linkKind, i: apiIndex(m.DownloadLink) }
-                : { mode: 'list', page, kind: linkKind, i: apiIndex(m.DownloadLink) }}
+        <div className="mt-4">
+          {activeQ.isPending && !activeQ.data ? <SkeletonRows count={6} /> : null}
+          {activeQ.isError && !activeQ.isFetching ? (
+            <ErrorCard
+              message={activeQ.error instanceof Error ? activeQ.error.message : undefined}
+              onRetry={() => activeQ.refetch()}
             />
-          ))}
-        </div>
-      )}
+          ) : null}
+          {!activeQ.isPending && !activeQ.isError && movies.length === 0 ? (
+            <Empty
+              title={searching ? `Nothing for “${debounced}”.` : 'This page is empty.'}
+              body="Try another word, another kind, or flip back a page."
+            />
+          ) : null}
 
-      {!searching && (
-        <div className="row mt-24" style={{ justifyContent: 'center' }}>
-          <button type="button" className="btn btn-ghost" disabled={page <= 1 || activeQ.isFetching} onClick={() => setPage(page - 1)}>Prev</button>
-          <Badge soft>Page {page}</Badge>
-          <button type="button" className="btn btn-ghost" disabled={activeQ.isFetching} onClick={() => setPage(Math.min(20, page + 1))}>Next</button>
+          {movies.length > 0 && s.view === 'list' ? (
+            <RowList label="Titles">
+              {movies.map((m) => (
+                <TitleRow
+                  key={`${m.DownloadLink}-${m.Title}`}
+                  movie={m}
+                  platform={platform}
+                  context={
+                    searching
+                      ? { mode: 'search', q: debounced, kind, i: apiIndex(m.DownloadLink) }
+                      : { mode: 'list', page, kind, i: apiIndex(m.DownloadLink) }
+                  }
+                />
+              ))}
+            </RowList>
+          ) : null}
+
+          {movies.length > 0 && s.view === 'grid' ? (
+            <div className="cardgrid">
+              {movies.map((m) => (
+                <TitleTile
+                  key={`${m.DownloadLink}-${m.Title}`}
+                  movie={m}
+                  platform={platform}
+                  context={
+                    searching
+                      ? { mode: 'search', q: debounced, kind, i: apiIndex(m.DownloadLink) }
+                      : { mode: 'list', page, kind, i: apiIndex(m.DownloadLink) }
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
-      )}
-    </div>
+
+        {!searching && movies.length > 0 ? (
+          <Pager
+            page={page}
+            busy={activeQ.isFetching}
+            onPrev={() => setPage(Math.max(1, page - 1))}
+            onNext={() => setPage(Math.min(20, page + 1))}
+          />
+        ) : null}
+      </Section>
+    </Page>
   )
 }

@@ -1,8 +1,10 @@
 import { z } from 'zod'
 
-export const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? 'http://localhost:8080'
+const env = import.meta.env
 
-export const SITE_URL = (import.meta as any).env?.VITE_SITE_URL ?? 'http://localhost:3000'
+export const API_BASE: string = env.VITE_API_BASE ?? 'http://localhost:8080'
+
+export const SITE_URL: string = env.VITE_SITE_URL ?? 'http://localhost:3000'
 
 /** Absolute URL for a pre-rendered OG image. Static files beat runtime
 rendering: they work on every host with zero native dependencies. */
@@ -108,7 +110,13 @@ export function fetchList(p: z.input<typeof ListParams>): Promise<Movie[]> {
 export const ALL_PLATFORMS: PlatformId[] = ['netnaija', 'nkiri', 'waploaded', 'fzmovies', 'o2tvseries']
 
 // Shelves shown in the UI. The rest stay live in the API but hidden.
-export const VISIBLE_PLATFORMS: PlatformId[] = ['nkiri']
+export const VISIBLE_PLATFORMS: PlatformId[] = [
+  'nkiri',
+  'waploaded',
+  'o2tvseries',
+  'netnaija',
+  'fzmovies',
+]
 
 export function isPlatform(v: unknown): v is PlatformId {
   return typeof v === 'string' && (ALL_PLATFORMS as string[]).includes(v)

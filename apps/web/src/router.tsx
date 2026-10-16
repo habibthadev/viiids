@@ -14,6 +14,7 @@ export function getRouter() {
     routeTree,
     context: { queryClient },
     defaultPreload: 'intent',
+    defaultViewTransition: true,
     defaultErrorComponent: DefaultCatchBoundary,
     defaultNotFoundComponent: () => <NotFound />,
   })

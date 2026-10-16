@@ -1,109 +1,69 @@
 import * as React from 'react'
-import { Link, useRouterState } from '@tanstack/react-router'
-import {
-  ArrowRight,
-  ArrowSquareOut,
-  CheckCircle,
-  DownloadSimple,
-  FileArrowDown,
-  List,
-  MagnifyingGlass,
-  X,
-  XCircle,
-} from '@phosphor-icons/react'
-import { useQuery } from '@tanstack/react-query'
-import { VISIBLE_PLATFORMS, downloadHref, fetchPlatforms, fetchResolve, fileLabel, type Movie, type PlatformId } from '~/lib/api'
-import { PLATFORM_BLURBS, PLATFORM_LABELS } from '~/store/useAppStore'
+import { useRouterState } from '@tanstack/react-router'
+import { ArrowSquareOut, DownloadSimple, FileArrowDown, MagnifyingGlass } from '@phosphor-icons/react'
+import { downloadHref, fetchResolve, fileLabel, type Movie } from '~/lib/api'
 import { AlertDialog } from '~/components/Modal'
-import { Badge } from '~/components/chrome'
+import { useAppStore } from '~/store/useAppStore'
+import { Dock, MenuSheet, Rail, TopBar, Toolbar } from '~/components/chrome'
+import { SearchPalette } from '~/components/controls'
+import { useRise } from '~/lib/motion'
 
-export function TopBar() {
-  const platformsQ = useQuery({ queryKey: ['platforms'], queryFn: fetchPlatforms })
-  const [menuOpen, setMenuOpen] = React.useState(false)
+/** Shared shell: rail (desktop sidebar), toolbar, dock, palette. */
+export function Shell({ children }: { children: React.ReactNode }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const setPalette = useAppStore((s) => s.setPalette)
+  const toggleView = useAppStore((s) => s.toggleView)
+  const [menu, setMenu] = React.useState(false)
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPalette(true)
+      } else if (mod && e.key.toLowerCase() === 'e') {
+        e.preventDefault()
+        toggleView()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setPalette, toggleView])
 
   return (
     <>
-      <a href="#main" className="skip-link">Skip to content</a>
-      <header className="topbar">
-        <button type="button" className="icon-btn menu-btn" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
-          <List size={20} />
-        </button>
-        <Link to="/" className="brand">
-          <span className="brand-mark">V</span>
-          <span className="brand-word">viiids<span className="brand-dot" aria-hidden="true">.</span></span>
-        </Link>
-        <nav className="nav-links" aria-label="Primary">
-          <Link to="/" className="nav-link" activeProps={{ className: 'nav-link active' }} activeOptions={{ exact: true }}>
-            Platforms
-          </Link>
-        </nav>
-        <div className="topbar-right">
-          {platformsQ.isError ? (
-            <span className="badge"><XCircle size={14} /> Offline</span>
-          ) : (
-            <span className="badge"><CheckCircle size={14} /> {platformsQ.data ? platformsQ.data.filter((p) => VISIBLE_PLATFORMS.includes(p.id as PlatformId)).length : VISIBLE_PLATFORMS.length} live</span>
-          )}
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+      <TopBar />
+      <div className="frame shell">
+        <Rail />
+        <div className="maincol">
+          <Toolbar />
+          <main id="main" tabIndex={-1} style={{ outline: 'none' }} key={pathname}>
+            {children}
+          </main>
         </div>
-      </header>
-      {menuOpen && (
-        <>
-          <div className="overlay" style={{ background: 'rgba(15,15,15,0.25)' }} onClick={() => setMenuOpen(false)} />
-          <aside className="drawer" role="navigation" aria-label="Mobile">
-            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-              <span className="eyebrow"><span className="eyebrow-dot" /> Menu</span>
-              <button type="button" className="icon-btn" style={{ display: 'inline-flex' }} aria-label="Close menu" onClick={() => setMenuOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
-            <Link to="/" className="side-item" activeProps={{ className: 'side-item active' }} activeOptions={{ exact: true }} onClick={() => setMenuOpen(false)}>
-              <span className="plat-index" aria-hidden="true">00</span>
-              <span style={{ flex: 1 }}>All platforms</span>
-              <ArrowRight size={16} className="arrow" aria-hidden="true" />
-            </Link>
-            {VISIBLE_PLATFORMS.map((p: PlatformId, n: number) => (
-              <Link
-                key={p}
-                to="/$platformId"
-                params={{ platformId: p }}
-                className="side-item"
-                activeProps={{ className: 'side-item active' }}
-                onClick={() => setMenuOpen(false)}
-              >
-                <span className="plat-index" aria-hidden="true">{String(n + 1).padStart(2, '0')}</span>
-                <span style={{ flex: 1 }}>
-                  {PLATFORM_LABELS[p]}
-                  <span className="small muted" style={{ display: 'block', letterSpacing: 'normal', textTransform: 'none' }}>
-                    {PLATFORM_BLURBS[p]}
-                  </span>
-                </span>
-                <ArrowRight size={16} className="arrow" aria-hidden="true" />
-              </Link>
-            ))}
-          </aside>
-        </>
-      )}
+      </div>
+      <Dock onMenu={() => setMenu(true)} />
+      <MenuSheet open={menu} onClose={() => setMenu(false)} />
+      <SearchPalette />
     </>
   )
 }
 
-export function PlatformTabs({ platform }: { platform: PlatformId }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const tab = pathname.endsWith('/movies') ? 'movies' : pathname.endsWith('/series') ? 'series' : 'browse'
-  const cls = (t: string) => `pill-tab${tab === t ? ' active' : ''}`
+/** Wraps a page body: staggers [data-rise] elements once per mount. */
+export function Page({ children }: { children: React.ReactNode }) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  useRise(ref)
   return (
-    <nav className="pill-tabs" aria-label="Sections">
-      <Link to="/$platformId" params={{ platformId: platform }} className={cls('browse')} activeOptions={{ exact: true }} activeProps={{ className: 'pill-tab active' }}>
-        Browse
-      </Link>
-      <Link to="/$platformId/movies" params={{ platformId: platform }} className={cls('movies')} activeProps={{ className: 'pill-tab active' }}>
-        Movies
-      </Link>
-      <Link to="/$platformId/series" params={{ platformId: platform }} className={cls('series')} activeProps={{ className: 'pill-tab active' }}>
-        Series
-      </Link>
-    </nav>
+    <div ref={ref} data-page>
+      {children}
+    </div>
   )
 }
+
+/* ---------------- download flow ---------------- */
 
 type DlPhase = 'idle' | 'working' | 'ready' | 'empty' | 'failed'
 
@@ -139,40 +99,76 @@ export function DownloadPanel({ movie }: { movie: Movie }) {
   }
 
   return (
-    <div className="panel-ice">
-      <strong style={{ fontSize: 16 }}>Download</strong>
-      {phase === 'idle' && <p className="muted small" style={{ margin: '6px 0 0' }}>Scan finds the file. You stay here.</p>}
-      {phase === 'working' && <p className="small" style={{ margin: '6px 0 0' }}><MagnifyingGlass size={14} /> Scanning source…</p>}
-      {phase === 'failed' && <p className="small" style={{ margin: '6px 0 0' }}>Scan failed. Open the source instead.</p>}
-      {phase === 'ready' && (
-              <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-                {direct.map((u) => (
-                  <a key={u} className="btn btn-black dl-row" href={downloadHref(u, movie.Title, pageUrl, pageUrl)} download>
-                    <FileArrowDown size={15} /> <span className="clip">{fileLabel(u)}</span>
-                  </a>
-                ))}
-          <span className="small muted">Big files take a while. Keep the tab open.</span>
+    <div className="callout" data-rise>
+      <div className="rowflex" style={{ justifyContent: 'space-between', gap: '0.75rem' }}>
+        <p className="t-lead fd c-ink rowflex" style={{ gap: '0.45rem' }}>
+          <DownloadSimple size={16} className="c-accent" aria-hidden="true" /> Download
+        </p>
+        <span className="tag accent">in-site</span>
+      </div>
+
+      {phase === 'idle' ? (
+        <p className="t-body c-ink2 mt-2 pretty">
+          Scan the source from here — the file streams through this page. No new tabs.
+        </p>
+      ) : null}
+      {phase === 'working' ? (
+        <p className="t-body c-ink2 mt-2 rowflex" style={{ gap: '0.5rem' }} role="status">
+          <span className="spin" aria-hidden="true" /> Scanning the source…
+        </p>
+      ) : null}
+      {phase === 'failed' ? (
+        <p className="t-body c-bad mt-2">Scan failed. Open the source instead.</p>
+      ) : null}
+      {phase === 'empty' ? (
+        <p className="t-body c-ink2 mt-2 pretty">{note || 'No direct file found. Open the source instead.'}</p>
+      ) : null}
+      {phase === 'ready' ? (
+        <div className="stack mt-3" style={{ gap: '0.4rem' }}>
+          {direct.map((u) => (
+            <a
+              key={u}
+              className="btn btn-solid btn-sm"
+              style={{ justifyContent: 'flex-start' }}
+              href={downloadHref(u, movie.Title, pageUrl, pageUrl)}
+              download
+            >
+              <FileArrowDown size={14} /> <span className="clip">{fileLabel(u)}</span>
+            </a>
+          ))}
+          <span className="t-small c-ink3">Big files take a while. Keep the tab open.</span>
         </div>
-      )}
-      {phase === 'empty' && (
-        <p className="small muted" style={{ margin: '6px 0 0' }}>{note || 'No direct file found. Open the source instead.'}</p>
-      )}
-      <div className="row mt-16" style={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-        <button type="button" className="btn btn-ghost" onClick={() => { void navigator.clipboard?.writeText(pageUrl) }}>Copy link</button>
+      ) : null}
+
+      <div className="rowflex mt-3">
+        <button type="button" className="btn btn-outline btn-sm" onClick={() => void navigator.clipboard?.writeText(pageUrl)}>
+          Copy link
+        </button>
         {phase === 'ready' ? (
-          <button type="button" className="btn btn-ghost" onClick={() => setConfirm(true)}>
-            Source <ArrowSquareOut size={14} />
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => setConfirm(true)}>
+            Source <ArrowSquareOut size={12} />
           </button>
         ) : (
-          <button type="button" className="btn btn-black" onClick={prepare} disabled={phase === 'working'}>
-            <DownloadSimple size={15} /> {phase === 'working' ? 'Scanning' : 'Download here'}
+          <button type="button" className="btn btn-solid btn-sm" onClick={prepare} disabled={phase === 'working'}>
+            {phase === 'working' ? (
+              <>
+                <span className="spin" aria-hidden="true" /> Scanning
+              </>
+            ) : (
+              <>
+                <MagnifyingGlass size={13} /> Download here
+              </>
+            )}
           </button>
         )}
+        <span className="spacer" />
+        <span className="t-micro mono c-ink3">{movie.Source || 'source'}</span>
       </div>
-      {confirm && (
+
+      {confirm ? (
         <AlertDialog
-          title="Open source?"
-          body={`This opens ${pageUrl} in a new tab.`}
+          title="Open the source?"
+          body={`This leaves viiids and opens ${pageUrl} in a new tab.`}
           confirmLabel="Continue"
           onCancel={() => setConfirm(false)}
           onConfirm={() => {
@@ -180,22 +176,7 @@ export function DownloadPanel({ movie }: { movie: Movie }) {
             setConfirm(false)
           }}
         />
-      )}
-    </div>
-  )
-}
-
-export function PageHero({ eyebrow, title, tone, sub }: { eyebrow: string; title: string; tone: string; sub: string }) {
-  return (
-    <div>
-      <div className="eyebrow" data-hero>
-        <span className="eyebrow-dot" />
-        {eyebrow}
-      </div>
-      <h1 className="headline section" data-hero>
-        {title} <span className="tone">{tone}</span>
-      </h1>
-      <p className="sub" data-hero>{sub}</p>
+      ) : null}
     </div>
   )
 }

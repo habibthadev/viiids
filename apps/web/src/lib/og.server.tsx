@@ -21,15 +21,15 @@ function loadSatori(): SatoriFn {
 export interface OgInput {
   title: string
   eyebrow: string
-  index: string
-  kind: 'movie' | 'series' | 'all'
+  index?: string
+  url?: string
 }
 
 const fontCache = new Map<string, ArrayBuffer>()
 
 export async function getOgFont(
-  family: 'Poppins' | 'Plus Jakarta Sans',
-  weight: 500 | 700,
+  family: 'Plus Jakarta Sans' | 'Manrope',
+  weight: 500 | 700 | 800,
 ): Promise<ArrayBuffer> {
   const key = `${family}:${weight}`
   const hit = fontCache.get(key)
@@ -62,116 +62,143 @@ export async function renderCard(input: OgInput): Promise<Uint8Array> {
 
 async function renderSvg(input: OgInput): Promise<string> {
   const satori = loadSatori()
-  const [poppins700, poppins500, jakarta700] = await Promise.all([
-    getOgFont('Poppins', 700),
-    getOgFont('Poppins', 500),
-    getOgFont('Plus Jakarta Sans', 700),
+  const [jakarta800, manrope500, manrope700] = await Promise.all([
+    getOgFont('Plus Jakarta Sans', 800),
+    getOgFont('Manrope', 500),
+    getOgFont('Manrope', 700),
   ])
   return satori(OgCard(input), {
     width: 1200,
     height: 630,
     fonts: [
-      { name: 'Poppins', data: poppins700, weight: 700 },
-      { name: 'Poppins', data: poppins500, weight: 500 },
-      { name: 'Plus Jakarta Sans', data: jakarta700, weight: 700 },
+      { name: 'Plus Jakarta Sans', data: jakarta800, weight: 800 },
+      { name: 'Manrope', data: manrope500, weight: 500 },
+      { name: 'Manrope', data: manrope700, weight: 700 },
     ],
   })
 }
 
-export function OgCard({ title, eyebrow, index, kind }: OgInput) {
-  const size = title.length > 52 ? 54 : title.length > 30 ? 66 : 80
+/**
+ * Dark editorial card: charcoal canvas, brand lime accents, ghost masthead
+ * numeral (same motif as the landing page) and a live-looking footer strip.
+ */
+export function OgCard({ title, eyebrow, index, url = 'viiids.vercel.app' }: OgInput) {
+  const size = title.length > 64 ? 58 : title.length > 38 ? 68 : 82
   return (
     <div
       style={{
         width: 1200,
         height: 630,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#0f0f0f',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        padding: 72,
-        fontFamily: 'Poppins',
-        border: '24px solid #0f0f0f',
+        padding: '64px 76px',
+        fontFamily: 'Manrope',
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <div style={{ width: 16, height: 16, borderRadius: 999, backgroundColor: '#0c76fe' }} />
+      {index ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: -48,
+            right: 40,
+            fontFamily: 'Plus Jakarta Sans',
+            fontSize: 300,
+            fontWeight: 800,
+            lineHeight: 1,
+            color: '#191919',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {index}
+        </div>
+      ) : null}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ width: 14, height: 14, borderRadius: 999, backgroundColor: '#dcf58f' }} />
+        <div
+          style={{
+            fontFamily: 'Manrope',
+            fontSize: 23,
+            fontWeight: 700,
+            letterSpacing: 6,
+            color: '#dcf58f',
+            textTransform: 'uppercase',
+          }}
+        >
+          {eyebrow}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 34 }}>
+        <div
+          style={{
+            width: 92,
+            height: 10,
+            borderRadius: 5,
+            backgroundImage: 'linear-gradient(90deg, #dcf58f, #9fe870)',
+          }}
+        />
         <div
           style={{
             fontFamily: 'Plus Jakarta Sans',
-            fontSize: 26,
-            fontWeight: 700,
-            letterSpacing: 4,
-            color: '#0f0f0f',
-          }}
-        >
-          {eyebrow.toUpperCase()}
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 40 }}>
-        <div
-          style={{
             fontSize: size,
-            fontWeight: 700,
-            lineHeight: 1.05,
+            fontWeight: 800,
+            lineHeight: 1.04,
             letterSpacing: '-0.02em',
-            color: '#0f0f0f',
-            maxHeight: size * 2.2,
+            color: '#f5f5f1',
+            maxHeight: Math.round(size * 3.2),
             overflow: 'hidden',
-            flex: 1,
+            maxWidth: 950,
           }}
         >
           {title}
         </div>
-        {index ? (
-          <div style={{ fontSize: 200, fontWeight: 700, lineHeight: 0.9, color: '#efefef' }}>{index}</div>
-        ) : null}
       </div>
+
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          borderTop: '2px solid #dbdbdb',
-          paddingTop: 28,
+          borderTop: '1px solid #262626',
+          paddingTop: 30,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div
             style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              backgroundColor: '#0f0f0f',
-              color: '#ffffff',
+              width: 46,
+              height: 46,
+              borderRadius: 13,
+              backgroundColor: '#dcf58f',
+              color: '#0f0f0f',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 24,
-              fontWeight: 700,
+              fontFamily: 'Plus Jakarta Sans',
+              fontSize: 26,
+              fontWeight: 800,
             }}
           >
             V
           </div>
-          <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 26, fontWeight: 700, letterSpacing: 3, color: '#0f0f0f' }}>
-            VIIIDS
+          <div
+            style={{
+              fontFamily: 'Plus Jakarta Sans',
+              fontSize: 30,
+              fontWeight: 800,
+              letterSpacing: 4,
+              color: '#f5f5f1',
+            }}
+          >
+            viiids
           </div>
         </div>
-        <div
-          style={{
-            fontFamily: 'Plus Jakarta Sans',
-            fontSize: 22,
-            fontWeight: 700,
-            letterSpacing: 2,
-            color: '#0f0f0f',
-            border: '2px solid #0f0f0f',
-            borderRadius: 999,
-            padding: '10px 28px',
-            backgroundColor: kind === 'movie' ? '#dcf58f' : '#ffffff',
-          }}
-        >
-          {kind.toUpperCase()}
-        </div>
+        <div style={{ fontFamily: 'Manrope', fontSize: 22, fontWeight: 500, letterSpacing: 1, color: '#75756e' }}>{url}</div>
       </div>
     </div>
   )
