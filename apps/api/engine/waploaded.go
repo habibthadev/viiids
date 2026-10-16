@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -339,56 +340,233 @@ func (engine *WaploadedEngine) List(page int) SearchResult {
 	return result
 }
 
-// Search : search waploaded. The site's file search is currently broken
-// (every type answers "No results found"); the canonical URLs are used so
-// results appear the moment it recovers.
+// The site's own search is useless for files: /search/<q> only indexes
+// forum/news threads (never movie or series posts) and the ?type=movie|series
+// filters answer "No results found" for every query. The file catalog lives
+// on films/shows.waploaded.com as numbered categories paginated newest-first,
+// so search runs against a cached index of every category page matched by
+// title.
+const (
+	wpCatalogURL    = "https://films.waploaded.com/169/hollywood-movies"
+	wpShowsURL      = "https://shows.waploaded.com/183/tv-series"
+	wpSearchPageCap = 80
+	wpIndexTTL      = 30 * time.Minute
+	wpSearchLimit   = 40
+	wpIndexParallel = 16
+)
+
+var wpLangTagRe = regexp.MustCompile(`(?i)\s*\[(?:japanese|thai|korean|hindi|chinese|yoruba|nollywood|turkish|spanish|filipino|arabic|indian|indonesian|malay|telugu|tamil|zulu|swahili|afrikaans|igbo|hausa)\]`)
+
+type waploadedIndex struct {
+	mu      sync.Mutex
+	items   []Movie
+	builtAt time.Time
+}
+
+var wpIndex waploadedIndex
+
+// movies returns the cached catalog index, rebuilding it when stale. A failed
+// refresh keeps the previous copy; concurrent searches wait for the one build.
+func (idx *waploadedIndex) movies() []Movie {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if len(idx.items) > 0 && time.Since(idx.builtAt) < wpIndexTTL {
+		return idx.items
+	}
+	items := crawlWaploadedCatalog()
+	if len(items) == 0 {
+		return idx.items
+	}
+	idx.items, idx.builtAt = items, time.Now()
+	return idx.items
+}
+
+// crawlWaploadedCatalog walks every page of the films and shows categories in
+// parallel and turns each card into a searchable item.
+func crawlWaploadedCatalog() []Movie {
+	applyHeaders := func(r *colly.Request) {
+		r.Headers.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		r.Headers.Set("User-Agent", browserUA)
+		if r.URL.Host != "" {
+			r.Headers.Set("Referer", "https://"+r.URL.Host+"/")
+		}
+	}
+
+	// Probe both category fronts for their page counts (page 1 links the
+	// last page).
+	lastPage := func(u string) int {
+		probe := colly.NewCollector()
+		probe.SetRequestTimeout(12 * time.Second)
+		probe.OnRequest(applyHeaders)
+		max := 1
+		probe.OnHTML("a", func(e *colly.HTMLElement) {
+			if m := wpPageRe.FindStringSubmatch(e.Attr("href")); m != nil {
+				if n, err := strconv.Atoi(m[1]); err == nil && n > max {
+					max = n
+				}
+			}
+		})
+		if err := probe.Visit(u); err != nil {
+			log.Errorf("waploaded catalog probe failed %v: %v", u, err)
+		}
+		if max > wpSearchPageCap {
+			max = wpSearchPageCap
+		}
+		return max
+	}
+
+	filmsPages := lastPage(wpCatalogURL)
+	showsPages := lastPage(wpShowsURL)
+
+	c := colly.NewCollector(colly.Async(true))
+	c.SetRequestTimeout(12 * time.Second)
+	_ = c.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: wpIndexParallel})
+	c.OnRequest(applyHeaders)
+	c.OnResponseHeaders(func(r *colly.Response) {
+		if !strings.Contains(r.Headers.Get("Content-Type"), "text") {
+			r.Request.Abort()
+		}
+	})
+	c.OnError(func(r *colly.Response, err error) {
+		log.Errorf("waploaded catalog page failed %v: %v status=%d", r.Request.URL, err, r.StatusCode)
+	})
+
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	var items []Movie
+	c.OnHTML("div.file_card", func(el *colly.HTMLElement) {
+		href := el.ChildAttr("a[title]", "href")
+		title := strings.TrimSpace(el.ChildAttr("a[title]", "title"))
+		if href == "" || title == "" {
+			return
+		}
+		isSeries := strings.Contains(href, "/series/")
+		if !isSeries && !strings.Contains(href, "/movie/") {
+			return
+		}
+		abs := el.Request.AbsoluteURL(href)
+		u, err := url.Parse(abs)
+		if err != nil {
+			return
+		}
+		title = cleanMovieTitle(wpLangTagRe.ReplaceAllString(title, ""))
+		if title == "" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if seen[abs] {
+			return
+		}
+		seen[abs] = true
+		items = append(items, Movie{
+			Index:          len(items),
+			Title:          title,
+			CoverPhotoLink: el.ChildAttr("img", "src"),
+			DownloadLink:   u,
+			Year:           movieYear(title),
+			IsSeries:       isSeries,
+			Source:         "Waploaded",
+		})
+	})
+
+	for _, site := range []struct {
+		base  string
+		pages int
+	}{
+		{wpCatalogURL, filmsPages},
+		{wpShowsURL, showsPages},
+	} {
+		for page := 1; page <= site.pages; page++ {
+			_ = c.Request("GET", fmt.Sprintf("%s/page/%d", site.base, page), nil, nil, nil)
+		}
+	}
+	c.Wait()
+	log.Infof("waploaded search index built: %d items (%d+%d pages)", len(items), filmsPages, showsPages)
+	return items
+}
+
+// normalizeSearch lowercases and flattens punctuation so titles and queries
+// compare word-wise ("Spider-Man: No Way Home" -> "spider man no way home").
+func normalizeSearch(s string) string {
+	var b strings.Builder
+	space := true
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			space = false
+		} else if !space {
+			b.WriteByte(' ')
+			space = true
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// rankWaploaded keeps items whose title contains every query token, ordered
+// by earliest match position then shortest title.
+func rankWaploaded(items []Movie, query string, limit int) []Movie {
+	q := normalizeSearch(query)
+	if q == "" {
+		return nil
+	}
+	tokens := strings.Fields(q)
+	type hit struct {
+		movie Movie
+		pos   int
+		size  int
+	}
+	var hits []hit
+	for _, m := range items {
+		t := normalizeSearch(m.Title)
+		pos := -1
+		ok := true
+		for _, tok := range tokens {
+			i := strings.Index(t, tok)
+			if i < 0 {
+				ok = false
+				break
+			}
+			if pos < 0 || i < pos {
+				pos = i
+			}
+		}
+		if ok {
+			hits = append(hits, hit{m, pos, len(t)})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].pos != hits[j].pos {
+			return hits[i].pos < hits[j].pos
+		}
+		return hits[i].size < hits[j].size
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	out := make([]Movie, 0, len(hits))
+	for i, h := range hits {
+		h.movie.Index = i
+		out = append(out, h.movie)
+	}
+	return out
+}
+
+// Search : match the query against the cached films/shows catalog index.
 func (engine *WaploadedEngine) Search(param ...string) SearchResult {
-	query := param[0]
+	query := strings.TrimSpace(param[0])
 	engine.mode = SearchMode
 	result := SearchResult{
 		Query: query,
 	}
-	types := []string{"movie", "series"}
-	out := make([][]Movie, len(types))
-	errs := make([]error, len(types))
-	var wg sync.WaitGroup
-	for i, typ := range types {
-		wg.Add(1)
-		go func(i int, typ string) {
-			defer wg.Done()
-			eng := NewWaploadedEngine()
-			eng.mode = SearchMode
-			u, err := url.Parse(fmt.Sprintf("https://waploaded.com/search/%s/page/1", url.PathEscape(query)))
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			q := u.Query()
-			q.Set("type", typ)
-			u.RawQuery = q.Encode()
-			eng.SearchURL = u
-			movies, err := Scrape(eng)
-			if err != nil {
-				log.Errorf("scrape failed: %v", err)
-				errs[i] = err
-				return
-			}
-			out[i] = movies
-		}(i, typ)
+	if query == "" {
+		return result
 	}
-	wg.Wait()
-	movies := []Movie{}
-	for _, m := range out {
-		movies = append(movies, m...)
+	items := wpIndex.movies()
+	if len(items) == 0 {
+		result.Error = "source unreachable, try again"
+		return result
 	}
-	if len(movies) == 0 {
-		for _, e := range errs {
-			if e != nil {
-				result.Error = e.Error()
-				break
-			}
-		}
-	}
-	result.Movies = movies
+	result.Movies = rankWaploaded(items, query, wpSearchLimit)
 	return result
 }

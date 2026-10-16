@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
 
 func TestLooksLikeSeries(t *testing.T) {
 	series := []string{
@@ -109,5 +112,57 @@ func TestMovieYear(t *testing.T) {
 		if got := movieYear(c.in); got != c.want {
 			t.Errorf("movieYear(%q) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeSearch(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"Spider-Man: No Way Home (2026)", "spider man no way home 2026"},
+		{"  [REC]  ", "rec"},
+		{"Black Trick The Lawyer Who Controls Justice (2026)", "black trick the lawyer who controls justice 2026"},
+	}
+	for _, c := range cases {
+		if got := normalizeSearch(c.in); got != c.want {
+			t.Errorf("normalizeSearch(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestRankWaploaded(t *testing.T) {
+	u := func(s string) *url.URL { p, _ := url.Parse("https://films.waploaded.com/movie/1/" + s); return p }
+	items := []Movie{
+		{Title: "The Sacrifice Game (2026)", DownloadLink: u("a")},
+		{Title: "Sacrifice (2026)", DownloadLink: u("b")},
+		{Title: "Tenzing (2026)", DownloadLink: u("c")},
+		{Title: "Spider-Man: No Way Home (2021)", DownloadLink: u("d")},
+		{Title: "No Country for Old Men (2007)", DownloadLink: u("e")},
+	}
+
+	got := rankWaploaded(items, "sacrifice", 10)
+	if len(got) != 2 {
+		t.Fatalf("sacrifice matched %d items, want 2", len(got))
+	}
+	if got[0].Title != "Sacrifice (2026)" {
+		t.Errorf("first hit = %q, want the shortest exact-word match", got[0].Title)
+	}
+
+	got = rankWaploaded(items, "spider man", 10)
+	if len(got) != 1 || got[0].Title != "Spider-Man: No Way Home (2021)" {
+		t.Fatalf("token match failed: %+v", got)
+	}
+
+	if got := rankWaploaded(items, "no way", 1); len(got) != 1 || got[0].Title != "Spider-Man: No Way Home (2021)" {
+		t.Fatalf("limit or multi-token match failed: %+v", got)
+	}
+
+	if got := rankWaploaded(items, "no", 10); len(got) != 2 {
+		t.Fatalf("substring token should hit both titles: %+v", got)
+	}
+
+	if got := rankWaploaded(items, "  ", 10); got != nil {
+		t.Fatalf("blank query must match nothing, got %+v", got)
 	}
 }
