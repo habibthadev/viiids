@@ -3,7 +3,6 @@ package engine
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -68,23 +67,26 @@ func (engine *NetNaijaEngine) getParseAttrs() (string, string, error) {
 }
 
 func (engine *NetNaijaEngine) parseSingleMovie(el *colly.HTMLElement, index int) (Movie, error) {
-	re := regexp.MustCompile(`\((.*)\)`)
 	movie := Movie{
 		Index:    index,
 		IsSeries: false,
 		Source:   engine.Name,
 	}
 
-	movie.CoverPhotoLink = el.ChildAttr("img", "src")
+	// Covers are lazy-loaded: src is a placeholder gif, the real image
+	// sits in data-src.
+	movie.CoverPhotoLink = bestImgURL(el, "img")
 	movie.Title = strings.TrimSpace(el.ChildText("h3.magsoul-grid-post-title a"))
 	if movie.Title == "" {
 		movie.Title = strings.TrimSpace(el.ChildText("h3 a"))
 	}
-	// Remove Video:/Movie: prefixes if present
+	// Remove Video:/Movie: prefixes if present, then strip source suffixes
+	// ("Khalifa (2026) Movie Download" -> "Khalifa (2026)").
 	movie.Title = strings.TrimSpace(
 		strings.TrimPrefix(
 			strings.TrimPrefix(movie.Title, "Movie:"),
 			"Video:"))
+	movie.Title = cleanMovieTitle(movie.Title)
 	movie.UploadDate = strings.TrimSpace(el.ChildText(".magsoul-grid-post-meta, .magsoul-post-date"))
 	movie.Description = strings.TrimSpace(el.ChildText("p"))
 	downloadLink, err := url.Parse(el.Request.AbsoluteURL(el.ChildAttr("h3.magsoul-grid-post-title a", "href")))
@@ -104,13 +106,7 @@ func (engine *NetNaijaEngine) parseSingleMovie(el *colly.HTMLElement, index int)
 	}
 	movie.DownloadLink = downloadLink
 	if movie.Title != "" {
-		year := re.FindStringSubmatch(movie.Title)
-		if len(year) > 1 {
-			intYear, err := strconv.Atoi(year[1])
-			if err == nil {
-				movie.Year = intYear
-			}
-		}
+		movie.Year = movieYear(movie.Title)
 	}
 	if movie.Title == "" {
 		return movie, fmt.Errorf("empty title, selector stale for %s", el.Request.URL)
@@ -140,12 +136,14 @@ func (engine *NetNaijaEngine) updateDownloadProps(downloadCollector *colly.Colle
 			return
 		}
 		if strings.Contains(lower, "meetdownload") ||
+			strings.Contains(lower, "downloadwella") ||
 			strings.Contains(lower, "download") && (strings.Contains(lower, ".mkv") || strings.Contains(lower, ".mp4")) ||
 			strings.HasSuffix(lower, ".mkv") ||
 			strings.HasSuffix(lower, ".mp4") {
 			if u, err := url.Parse(e.Request.AbsoluteURL(href)); err == nil {
 				cur := strings.ToLower(movie.DownloadLink.String())
-				if !strings.Contains(cur, "meetdownload") && !strings.HasSuffix(cur, ".mkv") && !strings.HasSuffix(cur, ".mp4") {
+				if !strings.Contains(cur, "meetdownload") && !strings.Contains(cur, "downloadwella") &&
+					!strings.HasSuffix(cur, ".mkv") && !strings.HasSuffix(cur, ".mp4") {
 					movie.DownloadLink = u
 				}
 			}

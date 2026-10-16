@@ -140,8 +140,8 @@ func filterKind(movies []engine.Movie, kind string) []engine.Movie {
 	return out
 }
 
-// ServeJSONEnvelope writes a cached-or-fresh envelope body with the right
-// status. Shared by the local server and the Vercel handlers.
+// writeProbed writes a freshly scraped envelope with the right status and
+// cache headers. Failed envelopes are never marked cacheable.
 func writeProbed(w http.ResponseWriter, body []byte) {
 	var probe struct {
 		OK bool `json:"ok"`
@@ -151,17 +151,38 @@ func writeProbed(w http.ResponseWriter, body []byte) {
 		status = http.StatusBadGateway
 	}
 	w.Header().Set("X-Cache", "MISS")
+	if status == http.StatusOK {
+		setPublicCache(w)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
 
+// writeCached replays a stored envelope with HIT markers and cache headers.
+func writeCached(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	setPublicCache(w)
+	w.Header().Set("X-Cache", "HIT")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// setPublicCache lets browsers and CDNs hold list/search results briefly;
+// the in-process cache still owns the authoritative 5 minute TTL.
+func setPublicCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=240")
+}
+
 func HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, envelope{OK: true, Data: map[string]string{"status": "up"}})
 }
 
 func HandlePlatforms(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, envelope{OK: true, Data: engine.GetPlatforms(), Count: 5})
+	platforms := engine.GetPlatforms()
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	writeJSON(w, http.StatusOK, envelope{OK: true, Data: platforms, Count: len(platforms)})
 }
 
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
@@ -176,18 +197,12 @@ func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-func HandleSearch(w http.ResponseWriter, r *http.Request) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		q = strings.TrimSpace(r.URL.Query().Get("query"))
-	}
+// serveScrape is the shared pipeline behind /api/search and /api/list:
+// validation, cached replay, in-flight de-dupe and the scrape deadline.
+func serveScrape(w http.ResponseWriter, r *http.Request, search bool) {
 	plat, ok := validPlatform(r.URL.Query().Get("platform"))
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "platform must be one of: netnaija, nkiri, waploaded, fzmovies, o2tvseries"})
-		return
-	}
-	if q == "" || len(q) > 120 {
-		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "q must be 1..120 chars"})
 		return
 	}
 	kind, ok := validKind(r.URL.Query().Get("kind"))
@@ -195,12 +210,32 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "kind must be one of: all, movie, series"})
 		return
 	}
-	key := "search:" + plat + ":" + kind + ":" + strings.ToLower(q)
+	query := ""
+	page := 1
+	key := ""
+	if search {
+		query = strings.TrimSpace(r.URL.Query().Get("q"))
+		if query == "" {
+			query = strings.TrimSpace(r.URL.Query().Get("query"))
+		}
+		if query == "" || len(query) > 120 {
+			writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "q must be 1..120 chars"})
+			return
+		}
+		key = "search:" + plat + ":" + kind + ":" + strings.ToLower(query)
+	} else {
+		if s := r.URL.Query().Get("page"); s != "" {
+			p, err := strconv.Atoi(s)
+			if err != nil || p < 1 || p > 20 {
+				writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "page must be 1..20"})
+				return
+			}
+			page = p
+		}
+		key = "list:" + plat + ":" + kind + ":" + strconv.Itoa(page)
+	}
 	if body, hit := cacheGet(key); hit {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Cache", "HIT")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
+		writeCached(w, body)
 		return
 	}
 	e, err := engine.GetEngine(plat)
@@ -214,13 +249,24 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 			if body, hit := cacheGet(key); hit {
 				return body
 			}
-			res := e.Search(q)
+			var res engine.SearchResult
+			if search {
+				res = e.Search(query)
+			} else {
+				res = e.List(page)
+			}
 			if res.Error != "" && len(res.Movies) == 0 {
 				body, _ := json.Marshal(envelope{OK: false, Error: res.Error})
 				return body
 			}
 			movies := filterKind(res.Movies, kind)
-			body, _ := json.Marshal(envelope{OK: true, Data: movies, Platform: plat, Query: q, Kind: kind, Count: len(movies)})
+			env := envelope{OK: true, Data: movies, Platform: plat, Kind: kind, Count: len(movies)}
+			if search {
+				env.Query = query
+			} else {
+				env.Page = page
+			}
+			body, _ := json.Marshal(env)
 			cacheSet(key, body)
 			return body
 		})
@@ -233,63 +279,9 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func HandleList(w http.ResponseWriter, r *http.Request) {
-	plat, ok := validPlatform(r.URL.Query().Get("platform"))
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "platform must be one of: netnaija, nkiri, waploaded, fzmovies, o2tvseries"})
-		return
-	}
-	page := 1
-	if s := r.URL.Query().Get("page"); s != "" {
-		p, err := strconv.Atoi(s)
-		if err != nil || p < 1 || p > 20 {
-			writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "page must be 1..20"})
-			return
-		}
-		page = p
-	}
-	kind, ok := validKind(r.URL.Query().Get("kind"))
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: "kind must be one of: all, movie, series"})
-		return
-	}
-	key := "list:" + plat + ":" + kind + ":" + strconv.Itoa(page)
-	if body, hit := cacheGet(key); hit {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Cache", "HIT")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
-		return
-	}
-	e, err := engine.GetEngine(plat)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, envelope{OK: false, Error: err.Error()})
-		return
-	}
-	ch := make(chan []byte, 1)
-	go func() {
-		ch <- flights.Do(key, func() []byte {
-			if body, hit := cacheGet(key); hit {
-				return body
-			}
-			res := e.List(page)
-			if res.Error != "" && len(res.Movies) == 0 {
-				body, _ := json.Marshal(envelope{OK: false, Error: res.Error})
-				return body
-			}
-			movies := filterKind(res.Movies, kind)
-			body, _ := json.Marshal(envelope{OK: true, Data: movies, Platform: plat, Page: page, Kind: kind, Count: len(movies)})
-			cacheSet(key, body)
-			return body
-		})
-	}()
-	select {
-	case body := <-ch:
-		writeProbed(w, body)
-	case <-time.After(scrapeTimeout):
-		writeJSON(w, http.StatusGatewayTimeout, envelope{OK: false, Error: "source slow, try again shortly"})
-	}
-}
+func HandleSearch(w http.ResponseWriter, r *http.Request) { serveScrape(w, r, true) }
+
+func HandleList(w http.ResponseWriter, r *http.Request) { serveScrape(w, r, false) }
 
 // StartCacheSweep evicts expired entries every minute. The local server
 // calls it on boot; serverless instances skip it (per-request expiry applies).

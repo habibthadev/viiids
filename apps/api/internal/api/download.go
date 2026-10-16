@@ -26,8 +26,14 @@ var (
 		".mp4": true, ".mkv": true, ".avi": true, ".webm": true,
 		".mov": true, ".m4v": true, ".mp3": true, ".flv": true,
 	}
-	hrefRe  = regexp.MustCompile(`(?i)(?:href|src)\s*=\s*["']([^"'#]+)["']`)
-	titleRe = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	assetExts = map[string]bool{
+		".css": true, ".js": true, ".png": true, ".jpg": true, ".jpeg": true,
+		".gif": true, ".svg": true, ".ico": true, ".webp": true, ".woff": true,
+		".woff2": true, ".ttf": true, ".map": true, ".xml": true, ".json": true,
+	}
+	hrefRe    = regexp.MustCompile(`(?i)(?:href|src)\s*=\s*["']([^"'#]+)["']`)
+	dataURLRe = regexp.MustCompile(`(?i)data-url\s*=\s*["']([^"'#]+)["']`)
+	titleRe   = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 	httpClientNoTimeout = &http.Client{
 		Timeout: 0,
@@ -246,6 +252,67 @@ type resolveResult struct {
 	Note   string   `json:"note,omitempty"`
 }
 
+// discoverLinks scans a page for direct file seeds (media extensions) and
+// wrapper pages worth following (/dl/ routes, "download"-ish paths, gated
+// file hosts, data-url attributes).
+func discoverLinks(base *url.URL, body []byte) (seed, pages []string) {
+	if base == nil {
+		return nil, nil
+	}
+	seenSeed := map[string]bool{}
+	seenPage := map[string]bool{}
+	pushSeed := func(abs string) {
+		if len(seed) >= 20 || seenSeed[abs] {
+			return
+		}
+		seenSeed[abs] = true
+		seed = append(seed, abs)
+	}
+	pushPage := func(abs string) {
+		if len(pages) >= 20 || seenPage[abs] {
+			return
+		}
+		seenPage[abs] = true
+		pages = append(pages, abs)
+	}
+	handle := func(href string) {
+		href = strings.TrimSpace(href)
+		if href == "" || strings.HasPrefix(href, "javascript:") || strings.HasPrefix(href, "mailto:") || strings.HasPrefix(href, "#") {
+			return
+		}
+		u, err := base.Parse(href)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return
+		}
+		u.Fragment = ""
+		abs := u.String()
+		if len(abs) > maxURLLen {
+			return
+		}
+		if assetExts[extOf(u)] || strings.HasPrefix(strings.ToLower(u.Hostname()), "dmca.") {
+			return
+		}
+		pathLower := strings.ToLower(u.Path)
+		switch {
+		case mediaExts[extOf(u)]:
+			pushSeed(abs)
+		case strings.Contains(pathLower, "download"):
+			pushPage(abs)
+		case strings.Contains(pathLower, "/dl/"):
+			pushPage(abs)
+		case unlockHost(u.Hostname()):
+			pushPage(abs)
+		}
+	}
+	for _, m := range hrefRe.FindAllSubmatch(body, 400) {
+		handle(string(m[1]))
+	}
+	for _, m := range dataURLRe.FindAllSubmatch(body, 100) {
+		handle(string(m[1]))
+	}
+	return seed, pages
+}
+
 func HandleResolve(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.URL.Query().Get("url"))
 	if err := guardURL(raw); err != nil {
@@ -282,24 +349,7 @@ func HandleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base, _ := url.Parse(raw)
-	var seed []string
-	seenSeed := map[string]bool{}
-	pushSeed := func(abs string) {
-		if len(seed) >= 20 || seenSeed[abs] {
-			return
-		}
-		seenSeed[abs] = true
-		seed = append(seed, abs)
-	}
-	var pages []string
-	seenPage := map[string]bool{}
-	pushPage := func(abs string) {
-		if len(pages) >= 20 || seenPage[abs] {
-			return
-		}
-		seenPage[abs] = true
-		pages = append(pages, abs)
-	}
+	seed, pages := discoverLinks(base, body)
 	title := ""
 	if m := titleRe.FindSubmatch(body); len(m) > 1 {
 		title = strings.TrimSpace(html.UnescapeString(string(m[1])))
@@ -307,43 +357,48 @@ func HandleResolve(w http.ResponseWriter, r *http.Request) {
 			title = title[:140]
 		}
 	}
-	for _, m := range hrefRe.FindAllSubmatch(body, 400) {
-		href := strings.TrimSpace(string(m[1]))
-		if href == "" || strings.HasPrefix(href, "javascript:") || strings.HasPrefix(href, "mailto:") || strings.HasPrefix(href, "#") {
-			continue
-		}
-		u, err := base.Parse(href)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-			continue
-		}
-		u.Fragment = ""
-		abs := u.String()
-		if len(abs) > maxURLLen {
-			continue
-		}
-		pathLower := strings.ToLower(u.Path)
-		switch {
-		case mediaExts[extOf(u)]:
-			pushSeed(abs)
-		case strings.Contains(pathLower, "download"):
-			pushPage(abs)
-		}
-		if len(seed) >= 20 && len(pages) >= 20 {
-			break
-		}
-	}
 	// Gated file hosts (downloadwella, meetdownload) hide the file behind a
 	// form post or an inline JS token link — open those server-side.
 	if len(seed) < 20 {
-		extractEmbeddedFiles(raw, body, pushSeed)
+		seen := map[string]bool{}
+		for _, s := range seed {
+			seen[s] = true
+		}
+		add := func(abs string) {
+			if len(seed) >= 20 || seen[abs] {
+				return
+			}
+			seen[abs] = true
+			seed = append(seed, abs)
+		}
+		extractEmbeddedFiles(raw, body, add)
 	}
 	// Junk page links must not suppress the form unlock: only verified
 	// file URLs count.
 	verified := verifyFiles(seed, raw)
+	finalURL := raw
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
 	if len(verified) == 0 {
-		if u, err := url.Parse(raw); err == nil && unlockHost(u.Hostname()) {
-			verified = verifyFiles(unlockXFS(raw, body), raw)
+		host := ""
+		if u, err := url.Parse(finalURL); err == nil {
+			host = u.Hostname()
 		}
+		switch {
+		case unlockHost(host):
+			// Redirectors (/dl/ → meetdownload) land here after following.
+			verified = verifyFiles(unlockXFS(finalURL, body), raw)
+		case isFzHost(host):
+			verified = verifyFiles(unlockFzmovies(finalURL), raw)
+		case isLoadedfilesHost(host):
+			verified = verifyFiles(unlockLoadedfiles(finalURL), raw)
+		}
+	}
+	// Wrapper pages (episode download buttons, meetdownload links found on
+	// a page) get one follow hop.
+	if len(verified) == 0 && len(pages) > 0 {
+		verified = followPages(pages, raw)
 	}
 	res := resolveResult{Title: title}
 	res.Direct = verified

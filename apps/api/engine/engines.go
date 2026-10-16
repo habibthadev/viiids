@@ -29,10 +29,15 @@ func (m Mode) String() string {
 }
 
 var (
-	seriesTitleRe = regexp.MustCompile(`(?i)(season|episodes?|tv series|\bS\d{1,2}E\d{1,2}\b|complete[^.]{0,20}series|series[^.]{0,20}complete|\bS\d{2}\b)`)
+	// Separators that can surround an Sxx/SxxEyy marker once titles are
+	// normalized (spaces become underscores on some sources).
+	seriesTitleRe = regexp.MustCompile(`(?i)(season|episodes?|tv[_\s]series|(?:^|[^a-z0-9])S\d{1,3}E\d{1,3}(?:[^a-z0-9]|$)|complete[^.]{0,20}series|series[^.]{0,20}complete|(?:^|[^a-z0-9])S\d{2}(?:[^a-z0-9]|$))`)
 	epLabelRe     = regexp.MustCompile(`(?i)season\s*(\d+)\s*episode\s*(\d+)`)
 	epHeadingRe   = regexp.MustCompile(`(?i)episode\s*(\d+)`)
-	epSlugRe      = regexp.MustCompile(`(?i)[^a-z0-9]S(\d{1,2})E(\d{1,2})([^a-z0-9]|$)`)
+	epSlugRe      = regexp.MustCompile(`(?i)[^a-z0-9]S(\d{1,3})[\s._-]*E(\d{1,3})([^a-z0-9]|$)`)
+	// "S01 E11" style markers found in link text on show/season pages.
+	// Episode numbers can run to three digits on daily soaps (S02 E188).
+	epTextRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})[\s._-]*E(\d{1,3})(?:[^a-z0-9]|$)`)
 )
 
 // looksLikeSeries reports whether a listing title reads as a series/season pack.
@@ -69,6 +74,9 @@ func episodeKey(text, href string) (key string, ok bool) {
 	if m := epLabelRe.FindStringSubmatch(text); len(m) == 3 {
 		return fmt.Sprintf("S%02sE%02s", pad2(m[1]), pad2(m[2])), true
 	}
+	if m := epTextRe.FindStringSubmatch(text); len(m) == 3 {
+		return fmt.Sprintf("S%02sE%02s", pad2(m[1]), pad2(m[2])), true
+	}
 	if m := epSlugRe.FindStringSubmatch(href); len(m) == 4 {
 		return fmt.Sprintf("S%02sE%02s", pad2(m[1]), pad2(m[2])), true
 	}
@@ -76,6 +84,74 @@ func episodeKey(text, href string) (key string, ok bool) {
 		return "E" + pad2(m[1]), true
 	}
 	return "", false
+}
+
+var (
+	// "X Movie 2022" -> "X (2022)"; bare "... Movie Download" / "... MOVIE"
+	// tails are noise on Nigerian sources, but a real title must not lose its
+	// last word ("Scary Movie"), so the bare-Movie strip requires a ")" or
+	// year in front of it.
+	movieYearSuffixRe     = regexp.MustCompile(`(?i)\s*[-–|:]?\s*movie\s+((?:19|20)\d{2})\s*$`)
+	tvSeriesYearRe        = regexp.MustCompile(`(?i)\s*\(((?:19|20)\d{2})\s+(?:tv|web)\s*series\)\s*$`)
+	tvSeriesTailRe        = regexp.MustCompile(`(?i)\s*\((?:tv|web)\s*series\)\s*$`)
+	messyDownloadRe       = regexp.MustCompile(`(?i)([)\d])((?:\s+(?:movie|film|free|mp4|hq|hd|mkv))+\s+download(?:\s+(?:movie|film|free|mp4|hq|hd|mkv))*)\s*$`)
+	movieDownloadSuffixRe = regexp.MustCompile(`(?i)\s*[-–|:]?\s*movie\s*download\s*$`)
+	plainDownloadRe       = regexp.MustCompile(`(?i)([)\d])\s+download\s*$`)
+	movieTailRe           = regexp.MustCompile(`(?i)([)\d])\s*[-–|:]?\s*movie\s*$`)
+	parenYearRe           = regexp.MustCompile(`\((\d{4})\)`)
+	endYearRe             = regexp.MustCompile(`(?:^|\s)((?:19|20)\d{2})\s*$`)
+)
+
+// bestImgURL prefers lazy-load attributes over placeholder src images and
+// resolves the winner against the current request.
+func bestImgURL(el *colly.HTMLElement, sel string) string {
+	for _, attr := range []string{"data-src", "data-lazy-src", "src"} {
+		if v := strings.TrimSpace(el.ChildAttr(sel, attr)); v != "" {
+			if abs := el.Request.AbsoluteURL(v); abs != "" {
+				return abs
+			}
+		}
+	}
+	return ""
+}
+
+// cleanMovieTitle drops download-site title noise ("Movie Download",
+// trailing "MOVIE", "Movie 2022") while protecting real titles.
+func cleanMovieTitle(title string) string {
+	t := strings.TrimSpace(title)
+	if m := movieYearSuffixRe.FindStringSubmatch(t); len(m) == 2 {
+		t = movieYearSuffixRe.ReplaceAllString(t, " ("+m[1]+")")
+	}
+	t = messyDownloadRe.ReplaceAllString(t, "$1")
+	t = movieDownloadSuffixRe.ReplaceAllString(t, "")
+	t = plainDownloadRe.ReplaceAllString(t, "$1")
+	t = movieTailRe.ReplaceAllString(t, "$1")
+	t = tvSeriesYearRe.ReplaceAllString(t, " ($1)")
+	t = tvSeriesTailRe.ReplaceAllString(t, "")
+	if !parenYearRe.MatchString(t) {
+		if m := endYearRe.FindStringSubmatch(t); len(m) == 2 {
+			trimmed := strings.TrimSpace(strings.TrimSuffix(t, m[1]))
+			if trimmed != "" {
+				t = trimmed + " (" + m[1] + ")"
+			}
+		}
+	}
+	return strings.TrimSpace(t)
+}
+
+// movieYear extracts a year from "(YYYY)" or a trailing bare year.
+func movieYear(title string) int {
+	if m := parenYearRe.FindStringSubmatch(title); len(m) == 2 {
+		if y, err := strconv.Atoi(m[1]); err == nil {
+			return y
+		}
+	}
+	if m := endYearRe.FindStringSubmatch(title); len(m) == 2 {
+		if y, err := strconv.Atoi(m[1]); err == nil {
+			return y
+		}
+	}
+	return 0
 }
 
 func pad2(s string) string {
@@ -97,18 +173,37 @@ type Engine interface {
 	updateDownloadProps(downloadCollector *colly.Collector, movies *[]Movie)
 }
 
+// downloadPropsWaiter lets an engine flush fan-out work spawned from detail
+// pages (e.g. waploaded season pages) before Scrape returns.
+type downloadPropsWaiter interface {
+	waitDownloadProps()
+}
+
+// requestTimeouter lets slow sources raise the per-request timeout used by
+// Scrape (the default suits most engines).
+type requestTimeouter interface {
+	requestTimeout() time.Duration
+}
+
 const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 // Scrape : Parse queries a url and return results (no disk cache, no chrome driver)
 func Scrape(engine Engine) ([]Movie, error) {
+	// NOTE: colly's Async(bool) option ignores its argument and always turns
+	// async on. Detail visits are parallel by design; the Wait calls below
+	// are what make the flow deterministic.
 	c := colly.NewCollector(
-		colly.Async(false),
+		colly.Async(true),
 		colly.MaxDepth(2),
 	)
-	c.SetRequestTimeout(12 * time.Second)
+	timeout := 12 * time.Second
+	if rt, ok := engine.(requestTimeouter); ok {
+		timeout = rt.requestTimeout()
+	}
+	c.SetRequestTimeout(timeout)
 
 	downloadLinkCollector := c.Clone()
-	downloadLinkCollector.SetRequestTimeout(12 * time.Second)
+	downloadLinkCollector.SetRequestTimeout(timeout)
 
 	movieIndex := 0
 	var movies []Movie
@@ -127,7 +222,6 @@ func Scrape(engine Engine) ([]Movie, error) {
 				log.Debugf("%v could not be parsed: %v", movie, err)
 			} else {
 				movies = append(movies, movie)
-				downloadLinkCollector.Visit(movie.DownloadLink.String())
 				movieIndex++
 			}
 		})
@@ -175,6 +269,9 @@ func Scrape(engine Engine) ([]Movie, error) {
 			r.Request.Abort()
 		}
 	})
+	downloadLinkCollector.OnError(func(r *colly.Response, err error) {
+		log.Debugf("detail visit failed %v: %v (status %d)", r.Request.URL, err, r.StatusCode)
+	})
 
 	if err := c.Visit(engine.getParseURL().String()); err != nil {
 		if firstErr == nil {
@@ -182,7 +279,17 @@ func Scrape(engine Engine) ([]Movie, error) {
 		}
 	}
 	c.Wait()
+	// Detail visits start once the listing is fully parsed so the movies
+	// slice is only read (never appended) from their goroutines.
+	for _, movie := range movies {
+		if movie.DownloadLink != nil {
+			_ = downloadLinkCollector.Visit(movie.DownloadLink.String())
+		}
+	}
 	downloadLinkCollector.Wait()
+	if w, ok := engine.(downloadPropsWaiter); ok {
+		w.waitDownloadProps()
+	}
 	if len(movies) == 0 && firstErr != nil {
 		return movies, firstErr
 	}
@@ -288,8 +395,6 @@ type PlatformMeta struct {
 func GetEngines() map[string]Engine {
 	engines := make(map[string]Engine)
 	engines["netnaija"] = NewNetNaijaEngine()
-	engines["nkiri"] = NewNkiriEngine()
-	engines["thenkiri"] = NewNkiriEngine()
 	engines["nkiri"] = NewNkiriEngine()
 	engines["fzmovies"] = NewFzEngine()
 	engines["waploaded"] = NewWaploadedEngine()

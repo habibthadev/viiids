@@ -1,25 +1,35 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { PlatformId } from '~/lib/api'
 
 export type SortMode = 'relevance' | 'year-desc' | 'title-az'
+export type ViewMode = 'list' | 'grid'
 
 interface AppState {
-  platform: PlatformId
   sort: SortMode
-  onlySeries: boolean
-  onlyMovies: boolean
-  withCover: boolean
+  view: ViewMode
+  paletteOpen: boolean
   set: (p: Partial<AppState>) => void
+  toggleView: () => void
+  setPalette: (open: boolean) => void
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  platform: 'netnaija',
-  sort: 'relevance',
-  onlySeries: false,
-  onlyMovies: false,
-  withCover: false,
-  set: (p) => set(p),
-}))
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      sort: 'relevance',
+      view: 'list',
+      paletteOpen: false,
+      set: (p) => set(p),
+      toggleView: () => set((s) => ({ view: s.view === 'list' ? 'grid' : 'list' })),
+      setPalette: (open) => set({ paletteOpen: open }),
+    }),
+    {
+      name: 'viiids-ui',
+      partialize: (s) => ({ sort: s.sort, view: s.view }) as AppState,
+    },
+  ),
+)
 
 export const PLATFORM_LABELS: Record<PlatformId, string> = {
   netnaija: 'NetNaija',
@@ -33,14 +43,6 @@ export const PLATFORM_BLURBS: Record<PlatformId, string> = {
   netnaija: 'Nollywood and Hollywood films, fresh daily.',
   nkiri: 'Hollywood plus Korean and Asian picks.',
   waploaded: 'Forum shelf. Music, movies and more.',
-  fzmovies: 'Reviews and features, curated slow.',
+  fzmovies: 'Bollywood, Hollywood and dubbed, all qualities.',
   o2tvseries: 'Movies and series packs, direct links.',
-}
-
-export const PLATFORM_TAGLINES: Record<PlatformId, [string, string]> = {
-  netnaija: ['Nollywood first.', 'fresh daily.'],
-  nkiri: ['Hollywood and beyond.', 'updated hourly.'],
-  waploaded: ['The forum shelf.', 'deep cuts.'],
-  fzmovies: ['Slow cinema.', 'worth the wait.'],
-  o2tvseries: ['Series in packs.', 'grab them whole.'],
 }

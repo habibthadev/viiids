@@ -26,16 +26,16 @@ const require = createRequire(import.meta.url)
 const { renderCard } = require(bundle)
 
 const cards = [
-  { file: 'brand.png', title: 'Every shelf. One search.', eyebrow: 'VIIIDS', index: '', kind: 'all' },
-  { file: 'netnaija.png', title: 'Nollywood first. fresh daily.', eyebrow: 'NetNaija', index: '01', kind: 'all' },
-  { file: 'nkiri.png', title: 'Hollywood and beyond. updated hourly.', eyebrow: 'Nkiri', index: '02', kind: 'all' },
-  { file: 'waploaded.png', title: 'The forum shelf. deep cuts.', eyebrow: 'Waploaded', index: '03', kind: 'all' },
-  { file: 'fzmovies.png', title: 'Slow cinema. worth the wait.', eyebrow: 'FzMovies', index: '04', kind: 'all' },
-  { file: 'o2tvseries.png', title: 'Series in packs. grab them whole.', eyebrow: 'O2TVSeries', index: '05', kind: 'all' },
+  { file: 'brand.png', title: 'Every shelf. One search.', eyebrow: 'movies & series', index: '' },
+  { file: 'netnaija.png', title: 'Nollywood and Hollywood, fresh daily.', eyebrow: 'NetNaija', index: '01' },
+  { file: 'nkiri.png', title: 'Hollywood plus Korean and Asian picks.', eyebrow: 'Nkiri', index: '02' },
+  { file: 'waploaded.png', title: 'Forum shelf. Music, movies and more.', eyebrow: 'Waploaded', index: '03' },
+  { file: 'fzmovies.png', title: 'Bollywood, Hollywood and dubbed, all qualities.', eyebrow: 'FzMovies', index: '04' },
+  { file: 'o2tvseries.png', title: 'Movies and series packs, direct links.', eyebrow: 'O2TVSeries', index: '05' },
 ]
 
 for (const c of cards) {
-  const png = await renderCard({ title: c.title, eyebrow: c.eyebrow, index: c.index, kind: c.kind })
+  const png = await renderCard({ title: c.title, eyebrow: c.eyebrow, index: c.index })
   writeFileSync(path.join(outDir, c.file), png)
   console.log('wrote og/' + c.file, png.length, 'bytes')
 }
